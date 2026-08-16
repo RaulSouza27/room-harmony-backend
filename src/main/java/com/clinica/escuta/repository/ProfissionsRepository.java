@@ -7,6 +7,5 @@ import java.util.List;
 
 @Repository
 public interface ProfissionsRepository extends JpaRepository<Profissions, Integer> {
-    List<Profissions> findByid();
-    List<Profissions> findByidOrderByNameAsc();
+    List<Profissions> findAllByOrderByProfissionAsc();
 }

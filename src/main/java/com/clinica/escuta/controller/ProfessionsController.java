@@ -22,7 +22,7 @@ public class ProfessionsController {
 
     @PostMapping
     public ResponseEntity<?> save(@RequestBody ProfissionsDTO request) {
-        if (request.getId() != null || request.getProfission() != null) {
+        if (request.getId() != null || request.getProfission() == null) {
             return ResponseEntity.badRequest().body("Missing information to create Profissions");
         }
         Profissions entity = ProfissionsDTO.toEntity(request);
@@ -32,7 +32,7 @@ public class ProfessionsController {
 
     @GetMapping("readAll")
     public ResponseEntity<?> readAll() {
-        List<Profissions> list = professionsRepository.findByidOrderByNameAsc();
+        List<Profissions> list = professionsRepository.findAllByOrderByProfissionAsc();
         return ResponseEntity.ok().body(list);
     }
 
@@ -42,10 +42,10 @@ public class ProfessionsController {
         return entity.map(profissions -> ResponseEntity.ok().body(profissions)).orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    @PutMapping("{id")
+    @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Integer id, @RequestBody ProfissionsDTO request) {
         Optional<Profissions> entity = professionsRepository.findById(id);
-        if (entity.isPresent()) {
+        if (entity.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
         entity.get().setProfission(request.getProfission());
@@ -54,12 +54,12 @@ public class ProfessionsController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<?> delete(@RequestBody ProfissionsDTO request) {
-        if (request.getId() != null) {
-            return ResponseEntity.badRequest().body("Missing information to delete Profissions");
+    public ResponseEntity<?> delete(@PathVariable Integer id) {
+        Optional<Profissions> entity = professionsRepository.findById(id);
+        if (entity.isEmpty()) {
+            return ResponseEntity.notFound().build();
         }
-        Profissions entity = ProfissionsDTO.toEntity(request);
-        professionsRepository.delete(entity);
+        professionsRepository.delete(entity.get());
         return ResponseEntity.ok().build();
     }
 
