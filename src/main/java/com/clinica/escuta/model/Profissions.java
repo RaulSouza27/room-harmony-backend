@@ -7,12 +7,12 @@ import lombok.Setter;
 @Getter
 @Setter
 @Entity
-@Table(name = "profissions")
+@Table(name = "professions")
 public class Profissions {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
 
-    @Column(name = "profission", nullable = false, columnDefinition = "TEXT")
+    @Column(name = "profession", nullable = false, columnDefinition = "TEXT")
     private String profission = "empty";
 }
