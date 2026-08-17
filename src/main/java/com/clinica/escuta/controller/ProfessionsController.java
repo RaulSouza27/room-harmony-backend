@@ -4,6 +4,7 @@ import com.clinica.escuta.DTO.ProfissionsDTO;
 import com.clinica.escuta.model.Profissions;
 import com.clinica.escuta.repository.ProfissionsRepository;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -20,6 +21,7 @@ public class ProfessionsController {
         this.professionsRepository = professionsRepository;
     }
 
+    @PreAuthorize("hasAuthority('admin')")
     @PostMapping
     public ResponseEntity<?> save(@RequestBody ProfissionsDTO request) {
         if (request.getId() != null || request.getProfission() == null) {
@@ -42,6 +44,7 @@ public class ProfessionsController {
         return entity.map(profissions -> ResponseEntity.ok().body(profissions)).orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    @PreAuthorize("hasAuthority('admin')")
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Integer id, @RequestBody ProfissionsDTO request) {
         Optional<Profissions> entity = professionsRepository.findById(id);
@@ -53,6 +56,7 @@ public class ProfessionsController {
         return ResponseEntity.ok().build();
     }
 
+    @PreAuthorize("hasAuthority('admin')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Integer id) {
         Optional<Profissions> entity = professionsRepository.findById(id);

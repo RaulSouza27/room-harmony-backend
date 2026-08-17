@@ -33,4 +33,7 @@ public class User {
 
     @Column(name = "access_level", nullable = false, length = 20)
     private String accessLevel;
+
+    @Column(name = "profession_id")
+    private Integer professionId;
 }
