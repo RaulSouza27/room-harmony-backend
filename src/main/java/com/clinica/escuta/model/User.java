@@ -33,4 +33,13 @@ public class User {
 
     @Column(name = "access_level", nullable = false, length = 20)
     private String accessLevel;
+
+    @Column(name = "profession_id")
+    private Integer professionId;
+
+    @Column(nullable = false)
+    private Boolean FirstLogin = true;
+
+    @Column(nullable = false)
+    private Boolean mustCompleteTour = true;
 }

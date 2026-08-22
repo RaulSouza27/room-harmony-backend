@@ -3,6 +3,7 @@ package com.clinica.escuta.controller;
 import com.clinica.escuta.DTO.UserDTO;
 import com.clinica.escuta.model.User;
 import com.clinica.escuta.repository.UserRepository;
+import com.clinica.escuta.repository.ProfissionsRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -20,10 +21,12 @@ public class UsersController {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final ProfissionsRepository profissionsRepository;
 
-    public UsersController(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public UsersController(UserRepository userRepository, PasswordEncoder passwordEncoder, ProfissionsRepository profissionsRepository) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.profissionsRepository = profissionsRepository;
     }
 
     @GetMapping
@@ -53,12 +56,20 @@ public class UsersController {
         user.setEmail(request.getEmail());
         user.setPasswordHash(passwordEncoder.encode(request.getPassword() != null ? request.getPassword() : "psi123"));
         user.setStatus(request.isStatus());
-        
         String accessLevel = request.getAccessLevel();
         if (accessLevel == null || (!accessLevel.equals("admin") && !accessLevel.equals("psi"))) {
             accessLevel = "psi";
         }
         user.setAccessLevel(accessLevel);
+        
+        if (request.getProfessionId() != null && request.getProfessionId() != 0) {
+            if (!profissionsRepository.existsById(request.getProfessionId())) {
+                return ResponseEntity.badRequest().body("Profession ID does not exist.");
+            }
+            user.setProfessionId(request.getProfessionId());
+        } else {
+            user.setProfessionId(null);
+        }
 
         User saved = userRepository.save(user);
         return ResponseEntity.ok(new UserDTO(saved));
@@ -98,6 +109,17 @@ public class UsersController {
             String acc = request.getAccessLevel();
             if (acc.equals("admin") || acc.equals("psi")) {
                 user.setAccessLevel(acc);
+            }
+        }
+
+        if (request.getProfessionId() != null) {
+            if (request.getProfessionId() != 0) {
+                if (!profissionsRepository.existsById(request.getProfessionId())) {
+                    return ResponseEntity.badRequest().body("Profession ID does not exist.");
+                }
+                user.setProfessionId(request.getProfessionId());
+            } else {
+                user.setProfessionId(null);
             }
         }
 

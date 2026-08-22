@@ -41,15 +41,25 @@ public class AuthController {
             User user = userOptional.get();
 
             if (Boolean.FALSE.equals(user.getStatus())) {
-                return ResponseEntity.status(403).body(new LoginResponseDTO(null, "User is inactive"));
+                return ResponseEntity.status(403).body(LoginResponseDTO.builder().message("User is inactive").build());
             }
 
             if (passwordEncoder.matches(loginRequest.getPassword(), user.getPasswordHash())) {
                 String token = jwtUtil.generateToken(user.getUsername(), user.getAccessLevel());
-                return ResponseEntity.ok(new LoginResponseDTO(token, "Login Successful!", user.getId(), user.getUsername(), user.getEmail(), user.getAccessLevel()));
+                return ResponseEntity.ok(LoginResponseDTO.builder().
+                        token(token).
+                        message("Login Successful!").
+                        id(user.getId()).
+                        username(user.getUsername()).
+                        email(user.getEmail()).
+                        accessLevel(user.getAccessLevel()).
+                        mustCompleteTour(user.getMustCompleteTour()).
+                        firstLogin(user.getFirstLogin()).
+                        status(user.getStatus()).
+                        build());
             }
         }
 
-        return ResponseEntity.status(401).body(new LoginResponseDTO(null, "Invalid email or password"));
+        return ResponseEntity.status(401).body(LoginResponseDTO.builder().message("Invalid email or password").build());
     }
 }

@@ -14,10 +14,9 @@ public class UserDTO {
     private String password;
     private String accessLevel;
     private boolean status;
-    private String phone;
-    private String specialty;
-    private String photo;
-    private List<String> units;
+    private Integer professionId;
+    private boolean isFirstLogin;
+    private boolean mustCompleteTour;
 
     public UserDTO() {
     }
@@ -28,9 +27,8 @@ public class UserDTO {
         this.email = user.getEmail();
         this.accessLevel = user.getAccessLevel();
         this.status = Boolean.TRUE.equals(user.getStatus());
-        this.phone = "";
-        this.specialty = "";
-        this.photo = "";
-        this.units = java.util.Collections.emptyList();
+        this.professionId = user.getProfessionId();
+        this.isFirstLogin = user.getFirstLogin();
+        this.mustCompleteTour = user.getMustCompleteTour();
     }
 }
