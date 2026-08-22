@@ -15,6 +15,8 @@ public class UserDTO {
     private String accessLevel;
     private boolean status;
     private Integer professionId;
+    private boolean isFirstLogin;
+    private boolean mustCompleteTour;
 
     public UserDTO() {
     }
@@ -26,5 +28,7 @@ public class UserDTO {
         this.accessLevel = user.getAccessLevel();
         this.status = Boolean.TRUE.equals(user.getStatus());
         this.professionId = user.getProfessionId();
+        this.isFirstLogin = user.getFirstLogin();
+        this.mustCompleteTour = user.getMustCompleteTour();
     }
 }

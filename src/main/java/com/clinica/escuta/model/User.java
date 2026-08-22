@@ -36,4 +36,10 @@ public class User {
 
     @Column(name = "profession_id")
     private Integer professionId;
+
+    @Column(nullable = false)
+    private Boolean FirstLogin = true;
+
+    @Column(nullable = false)
+    private Boolean mustCompleteTour = true;
 }

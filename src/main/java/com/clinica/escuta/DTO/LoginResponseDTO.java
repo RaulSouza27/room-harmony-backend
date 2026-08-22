@@ -1,10 +1,12 @@
 package com.clinica.escuta.DTO;
 
+import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
 
 @Getter
 @Setter
+@Builder
 public class LoginResponseDTO {
     private String token;
     private String message;
@@ -12,18 +14,7 @@ public class LoginResponseDTO {
     private String username;
     private String email;
     private String accessLevel;
-
-    public LoginResponseDTO(String token, String message) {
-        this.token = token;
-        this.message = message;
-    }
-
-    public LoginResponseDTO(String token, String message, Integer id, String username, String email, String accessLevel) {
-        this.token = token;
-        this.message = message;
-        this.id = id;
-        this.username = username;
-        this.email = email;
-        this.accessLevel = accessLevel;
-    }
+    private boolean status;
+    private boolean firstLogin;
+    private boolean mustCompleteTour;
 }
