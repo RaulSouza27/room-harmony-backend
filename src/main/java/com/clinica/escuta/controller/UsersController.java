@@ -4,12 +4,16 @@ import com.clinica.escuta.DTO.UserDTO;
 import com.clinica.escuta.model.User;
 import com.clinica.escuta.repository.UserRepository;
 import com.clinica.escuta.repository.ProfissionsRepository;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -22,6 +26,9 @@ public class UsersController {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final ProfissionsRepository profissionsRepository;
+
+    @Value("${default.password}")
+    private String defaultPassword;
 
     public UsersController(UserRepository userRepository, PasswordEncoder passwordEncoder, ProfissionsRepository profissionsRepository) {
         this.userRepository = userRepository;
@@ -125,5 +132,22 @@ public class UsersController {
 
         User saved = userRepository.save(user);
         return ResponseEntity.ok(new UserDTO(saved));
+    }
+
+    @PreAuthorize("hasAuthority('admin')")
+    @PostMapping("/{id}/reset-password")
+    public ResponseEntity<?> resetUserPassword(@PathVariable Integer id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Usuário não encontrado"));
+
+        String encodedPassword = passwordEncoder.encode(defaultPassword);
+        user.setPasswordHash(encodedPassword);
+
+        userRepository.save(user);
+
+        return ResponseEntity.ok(Map.of(
+                "message", "Senha resetada com sucesso",
+                "userId", user.getId()
+        ));
     }
 }
