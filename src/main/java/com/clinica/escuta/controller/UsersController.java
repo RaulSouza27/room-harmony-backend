@@ -150,4 +150,23 @@ public class UsersController {
                 "userId", user.getId()
         ));
     }
+
+    @PreAuthorize("isAuthenticated()")
+    @PutMapping("/{id}/completed-tour")
+    public ResponseEntity<?> completedTour(@PathVariable Integer id) {
+        Optional<User> userOpt = userRepository.findById(id);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        User user = userOpt.get();
+
+        user.setMustCompleteTour(false);
+
+        userRepository.save(user);
+
+        return ResponseEntity.ok(Map.of(
+                "message", "Usuário completou o tour inicial",
+                "userId", user.getId()
+        ));
+    }
 }
