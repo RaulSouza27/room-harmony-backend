@@ -1,10 +1,7 @@
 package com.clinica.escuta.controller;
 
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import com.clinica.escuta.DTO.LoginRequestDTO;
 import com.clinica.escuta.DTO.LoginResponseDTO;
 
@@ -14,8 +11,6 @@ import com.clinica.escuta.model.User;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.beans.factory.annotation.Autowired;
 import java.util.Optional;
-
-import org.springframework.web.bind.annotation.CrossOrigin;
 
 @CrossOrigin(origins = "*")
 @RestController
