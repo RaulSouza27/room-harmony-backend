@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -166,6 +167,39 @@ public class UsersController {
 
         return ResponseEntity.ok(Map.of(
                 "message", "Usuário completou o tour inicial",
+                "userId", user.getId()
+        ));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @PutMapping("/{id}/first-login")
+    public ResponseEntity<?> resetPasswordFirstLogin(
+            @PathVariable Integer id, 
+            @RequestBody Map<String, String> request,
+            Authentication authentication) {
+        Optional<User> userOpt = userRepository.findById(id);
+        if (userOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        User user = userOpt.get();
+
+        if (!user.getUsername().equals(authentication.getName())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Você não tem permissão para alterar a senha de outro usuário."));
+        }
+
+        String newPassword = request.get("password");
+        if (newPassword == null || newPassword.trim().isEmpty()) {
+            return ResponseEntity.badRequest().body("Senha não fornecida.");
+        }
+
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        user.setFirstLogin(false);
+
+        userRepository.save(user);
+
+        return ResponseEntity.ok(Map.of(
+                "message", "Senha de primeiro login alterada com sucesso",
                 "userId", user.getId()
         ));
     }
