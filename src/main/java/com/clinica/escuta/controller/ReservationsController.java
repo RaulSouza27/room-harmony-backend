@@ -29,6 +29,16 @@ public class ReservationsController {
             return ResponseEntity.badRequest().body("Missing required reservation fields.");
         }
 
+        // Check if creator is admin from SecurityContext
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        boolean isCreatorAdmin = auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> "admin".equals(a.getAuthority()));
+
+        // If the creator is not admin, require depositImage (receipt)
+        if (!isCreatorAdmin && (request.getDepositImage() == null || request.getDepositImage().trim().isEmpty() || "empty".equalsIgnoreCase(request.getDepositImage().trim()))) {
+            return ResponseEntity.badRequest().body("O comprovante de pagamento é obrigatório.");
+        }
+
         // Validate clinic hours
         if (!isValidWorkingHours(request.getData(), request.getHoraInicio(), request.getHoraFim())) {
             return ResponseEntity.badRequest().body("A reserva está fora do horário de funcionamento da clínica.");
@@ -89,8 +99,14 @@ public class ReservationsController {
                 reservation.setDescription(request.getDescription());
                 
                 String statusVal = request.getStatusString() != null ? request.getStatusString() : "pendente";
+                if (isCreatorAdmin) {
+                    statusVal = "aprovada";
+                }
                 String motivoVal = request.getMotivoNegacao() != null ? request.getMotivoNegacao() : "";
                 String aprovadoVal = request.getAprovadoPor() != null ? request.getAprovadoPor() : "";
+                if (isCreatorAdmin && (aprovadoVal == null || aprovadoVal.isEmpty())) {
+                    aprovadoVal = auth != null ? auth.getName() : "admin";
+                }
                 
                 reservation.setComments(statusVal + "|" + motivoVal + "|" + aprovadoVal + "|" + recorrencia);
                 reservation.setStatus(!"cancelada".equals(statusVal) && !"negada".equals(statusVal));
@@ -193,6 +209,19 @@ public class ReservationsController {
         }
         reservationRepository.deleteById(id);
         return ResponseEntity.ok("Reservation deleted successfully.");
+    }
+
+    @PostMapping("/delete-batch")
+    public ResponseEntity<?> deleteReservationsBatch(@RequestBody List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return ResponseEntity.badRequest().body("No IDs provided.");
+        }
+        for (Integer id : ids) {
+            if (reservationRepository.existsById(id)) {
+                reservationRepository.deleteById(id);
+            }
+        }
+        return ResponseEntity.ok("Reservations deleted successfully.");
     }
 
     private boolean isValidWorkingHours(LocalDate date, LocalTime start, LocalTime end) {
