@@ -17,4 +17,11 @@ public class LoginResponseDTO {
     private boolean status;
     private boolean firstLogin;
     private boolean mustCompleteTour;
+    private String phone;
+    private String cpf;
+    private String address;
+    private String cep;
+    private String photo;
+    private String boardNumber;
+    private Integer professionId;
 }

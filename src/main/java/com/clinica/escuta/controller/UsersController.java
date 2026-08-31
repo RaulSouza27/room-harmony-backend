@@ -63,7 +63,7 @@ public class UsersController {
         user.setUsername(request.getUsername());
         user.setEmail(request.getEmail());
         user.setPasswordHash(passwordEncoder.encode(request.getPassword() != null ? request.getPassword() : "psi123"));
-        user.setStatus(request.isStatus());
+        user.setStatus(request.getStatus() != null ? request.getStatus() : true);
         String accessLevel = request.getAccessLevel();
         if (accessLevel == null || (!accessLevel.equals("admin") && !accessLevel.equals("psi"))) {
             accessLevel = "psi";
@@ -79,17 +79,37 @@ public class UsersController {
             user.setProfessionId(null);
         }
 
+        user.setPhone(request.getPhone() != null ? request.getPhone() : "");
+        user.setCpf(request.getCpf() != null ? request.getCpf() : "");
+        user.setAddress(request.getAddress() != null ? request.getAddress() : "");
+        user.setCep(request.getCep() != null ? request.getCep() : "");
+        user.setPhoto(request.getPhoto());
+        user.setBoardNumber(request.getBoardNumber() != null ? request.getBoardNumber() : "");
+
         User saved = userRepository.save(user);
         return ResponseEntity.ok(new UserDTO(saved));
     }
 
+    @PreAuthorize("isAuthenticated()")
     @PutMapping("/{id}")
-    public ResponseEntity<?> updateUser(@PathVariable Integer id, @RequestBody UserDTO request) {
+    public ResponseEntity<?> updateUser(@PathVariable Integer id, @RequestBody UserDTO request, Authentication authentication) {
         Optional<User> userOpt = userRepository.findById(id);
         if (userOpt.isEmpty()) {
             return ResponseEntity.notFound().build();
         }
         User user = userOpt.get();
+
+        boolean isAdmin = authentication.getAuthorities().stream()
+                .anyMatch(a -> "admin".equals(a.getAuthority()));
+        if (!isAdmin && !user.getUsername().equals(authentication.getName())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Você não tem permissão para alterar o perfil de outro usuário."));
+        }
+
+        if (!isAdmin) {
+            request.setStatus(user.getStatus());
+            request.setAccessLevel(user.getAccessLevel());
+        }
 
         if (request.getUsername() != null && !request.getUsername().trim().isEmpty()) {
             Optional<User> existing = userRepository.findByUsername(request.getUsername());
@@ -111,7 +131,9 @@ public class UsersController {
             user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         }
 
-        user.setStatus(request.isStatus());
+        if (request.getStatus() != null) {
+            user.setStatus(request.getStatus());
+        }
         
         if (request.getAccessLevel() != null) {
             String acc = request.getAccessLevel();
@@ -130,6 +152,19 @@ public class UsersController {
                 user.setProfessionId(null);
             }
         }
+
+        if (request.getPhone() != null) user.setPhone(request.getPhone());
+        if (request.getCpf() != null) user.setCpf(request.getCpf());
+        if (request.getAddress() != null) user.setAddress(request.getAddress());
+        if (request.getCep() != null) user.setCep(request.getCep());
+        if (request.getPhoto() != null) user.setPhoto(request.getPhoto());
+        if (request.getBoardNumber() != null) user.setBoardNumber(request.getBoardNumber());
+
+        if (user.getPhone() == null) user.setPhone("");
+        if (user.getCpf() == null) user.setCpf("");
+        if (user.getAddress() == null) user.setAddress("");
+        if (user.getCep() == null) user.setCep("");
+        if (user.getBoardNumber() == null) user.setBoardNumber("");
 
         User saved = userRepository.save(user);
         return ResponseEntity.ok(new UserDTO(saved));

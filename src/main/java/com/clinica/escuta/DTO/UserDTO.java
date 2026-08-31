@@ -3,7 +3,6 @@ package com.clinica.escuta.DTO;
 import com.clinica.escuta.model.User;
 import lombok.Getter;
 import lombok.Setter;
-import java.util.List;
 
 @Getter
 @Setter
@@ -13,10 +12,16 @@ public class UserDTO {
     private String email;
     private String password;
     private String accessLevel;
-    private boolean status;
+    private Boolean status;
     private Integer professionId;
     private boolean isFirstLogin;
     private boolean mustCompleteTour;
+    private String phone;
+    private String cpf;
+    private String address;
+    private String cep;
+    private String photo;
+    private String boardNumber;
 
     public UserDTO() {
     }
@@ -28,7 +33,13 @@ public class UserDTO {
         this.accessLevel = user.getAccessLevel();
         this.status = Boolean.TRUE.equals(user.getStatus());
         this.professionId = user.getProfessionId();
-        this.isFirstLogin = user.getFirstLogin();
-        this.mustCompleteTour = user.getMustCompleteTour();
+        this.isFirstLogin = Boolean.TRUE.equals(user.getFirstLogin());
+        this.mustCompleteTour = Boolean.TRUE.equals(user.getMustCompleteTour());
+        this.phone = user.getPhone();
+        this.cpf = user.getCpf();
+        this.address = user.getAddress();
+        this.cep = user.getCep();
+        this.photo = user.getPhoto();
+        this.boardNumber = user.getBoardNumber();
     }
 }

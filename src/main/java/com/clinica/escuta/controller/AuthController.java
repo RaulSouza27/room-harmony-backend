@@ -51,6 +51,13 @@ public class AuthController {
                         mustCompleteTour(user.getMustCompleteTour()).
                         firstLogin(user.getFirstLogin()).
                         status(user.getStatus()).
+                        phone(user.getPhone()).
+                        cpf(user.getCpf()).
+                        address(user.getAddress()).
+                        cep(user.getCep()).
+                        photo(user.getPhoto()).
+                        boardNumber(user.getBoardNumber()).
+                        professionId(user.getProfessionId()).
                         build());
             }
         }
