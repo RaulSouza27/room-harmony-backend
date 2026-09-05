@@ -17,9 +17,16 @@ import java.util.Optional;
 public class ReservationsController {
 
     private final ReservationRepository reservationRepository;
+    private final com.clinica.escuta.repository.RoomRepository roomRepository;
+    private final com.clinica.escuta.repository.UnitRepository unitRepository;
 
-    public ReservationsController(ReservationRepository reservationRepository) {
+    public ReservationsController(
+            ReservationRepository reservationRepository,
+            com.clinica.escuta.repository.RoomRepository roomRepository,
+            com.clinica.escuta.repository.UnitRepository unitRepository) {
         this.reservationRepository = reservationRepository;
+        this.roomRepository = roomRepository;
+        this.unitRepository = unitRepository;
     }
 
     @PostMapping
@@ -40,8 +47,8 @@ public class ReservationsController {
         }
 
         // Validate clinic hours
-        if (!isValidWorkingHours(request.getData(), request.getHoraInicio(), request.getHoraFim())) {
-            return ResponseEntity.badRequest().body("A reserva está fora do horário de funcionamento da clínica.");
+        if (!isValidWorkingHours(request.getRoomsId(), request.getData(), request.getHoraInicio(), request.getHoraFim())) {
+            return ResponseEntity.badRequest().body("A reserva está fora do horário de funcionamento da unidade.");
         }
 
         // Determine recurrence string (default to "unica")
@@ -161,9 +168,11 @@ public class ReservationsController {
             recorrencia = getRecorrenciaFromComments(r.getComments());
         }
 
+        Integer targetRoomId = request.getRoomsId() != null ? request.getRoomsId() : r.getRoomsId();
+
         // Validate clinic hours
-        if (!isValidWorkingHours(targetDate, targetStart, targetEnd)) {
-            return ResponseEntity.badRequest().body("A reserva está fora do horário de funcionamento da clínica.");
+        if (!isValidWorkingHours(targetRoomId, targetDate, targetStart, targetEnd)) {
+            return ResponseEntity.badRequest().body("A reserva está fora do horário de funcionamento da unidade.");
         }
 
         // Validate duration
@@ -178,7 +187,6 @@ public class ReservationsController {
         }
 
         // Check conflict
-        Integer targetRoomId = request.getRoomsId() != null ? request.getRoomsId() : r.getRoomsId();
         if (hasConflict(targetRoomId, targetDate, targetStart, targetEnd, id)) {
             return ResponseEntity.badRequest().body("Existe um conflito de horário no dia " + targetDate + " na sala selecionada.");
         }
@@ -224,23 +232,44 @@ public class ReservationsController {
         return ResponseEntity.ok("Reservations deleted successfully.");
     }
 
-    private boolean isValidWorkingHours(LocalDate date, LocalTime start, LocalTime end) {
-        if (start.isAfter(end) || start.equals(end)) {
+    private boolean isValidWorkingHours(Integer roomId, LocalDate date, LocalTime start, LocalTime end) {
+        if (start == null || end == null || start.isAfter(end) || start.equals(end) || roomId == null || date == null) {
             return false;
         }
-        
-        java.time.DayOfWeek day = date.getDayOfWeek();
-        if (day == java.time.DayOfWeek.SUNDAY) {
+
+        Optional<com.clinica.escuta.model.Room> roomOpt = roomRepository.findById(roomId);
+        if (roomOpt.isEmpty()) {
             return false;
         }
-        
-        LocalTime clinicStart = LocalTime.of(7, 0);
-        if (day == java.time.DayOfWeek.SATURDAY) {
-            LocalTime clinicEnd = LocalTime.of(19, 0);
-            return !start.isBefore(clinicStart) && !end.isAfter(clinicEnd);
-        } else {
-            LocalTime clinicEnd = LocalTime.of(22, 0);
-            return !start.isBefore(clinicStart) && !end.isAfter(clinicEnd);
+        com.clinica.escuta.model.Room room = roomOpt.get();
+
+        Optional<com.clinica.escuta.model.Unit> unitOpt = unitRepository.findById(room.getUnitId());
+        if (unitOpt.isEmpty()) {
+            return false;
+        }
+        com.clinica.escuta.model.Unit unit = unitOpt.get();
+
+        java.util.Map<String, com.clinica.escuta.DTO.DayScheduleDTO> hours = unit.getBusinessHours();
+        if (hours == null || hours.isEmpty()) {
+            hours = com.clinica.escuta.DTO.UnitDTO.createDefaultBusinessHours();
+        }
+
+        int dayIndex = date.getDayOfWeek().getValue(); // Monday=1 ... Sunday=7
+        if (dayIndex == 7) {
+            dayIndex = 0; // 0 is Sunday in businessHours JSON
+        }
+
+        com.clinica.escuta.DTO.DayScheduleDTO daySchedule = hours.get(String.valueOf(dayIndex));
+        if (daySchedule == null || !daySchedule.isAtivo() || daySchedule.getAbertura() == null || daySchedule.getFechamento() == null) {
+            return false;
+        }
+
+        try {
+            LocalTime abertura = LocalTime.parse(daySchedule.getAbertura().length() == 5 ? daySchedule.getAbertura() + ":00" : daySchedule.getAbertura());
+            LocalTime fechamento = LocalTime.parse(daySchedule.getFechamento().length() == 5 ? daySchedule.getFechamento() + ":00" : daySchedule.getFechamento());
+            return !start.isBefore(abertura) && !end.isAfter(fechamento);
+        } catch (Exception e) {
+            return false;
         }
     }
 
