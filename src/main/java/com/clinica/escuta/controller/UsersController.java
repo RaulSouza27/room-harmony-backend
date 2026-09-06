@@ -38,9 +38,11 @@ public class UsersController {
     }
 
     @GetMapping
-    public ResponseEntity<List<UserDTO>> listAllUsers() {
+    public ResponseEntity<List<UserDTO>> listAllUsers(
+            @RequestParam(required = false, defaultValue = "false") boolean includePhoto
+    ) {
         List<UserDTO> users = userRepository.findAll().stream()
-                .map(UserDTO::new)
+                .map(u -> new UserDTO(u, includePhoto))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(users);
     }

@@ -26,13 +26,19 @@ public class ReservationDTO {
     }
 
     public ReservationDTO(Reservation reservation) {
+        this(reservation, true);
+    }
+
+    public ReservationDTO(Reservation reservation, boolean includeReceipt) {
         this.id = reservation.getId();
         this.roomsId = reservation.getRoomsId();
         this.userId = reservation.getUserId();
         this.data = reservation.getData();
         this.horaInicio = reservation.getHoraInicio();
         this.horaFim = reservation.getHoraFim();
-        this.depositImage = reservation.getDepositImage();
+        this.depositImage = includeReceipt ? reservation.getDepositImage() : (
+            reservation.getDepositImage() != null && !reservation.getDepositImage().isEmpty() && !"empty".equalsIgnoreCase(reservation.getDepositImage()) ? "has_receipt" : "empty"
+        );
         this.description = reservation.getDescription();
         this.recorrencia = "unica";
 

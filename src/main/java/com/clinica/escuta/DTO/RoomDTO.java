@@ -22,6 +22,10 @@ public class RoomDTO {
     }
 
     public RoomDTO(Room room) {
+        this(room, true);
+    }
+
+    public RoomDTO(Room room, boolean includePhotos) {
         this.id = room.getId();
         this.name = room.getName();
         this.unitId = room.getUnitId();
@@ -30,17 +34,19 @@ public class RoomDTO {
         this.comments = room.getComments();
         
         this.photos = new ArrayList<>();
-        if (room.getPhoto1() != null && !room.getPhoto1().isEmpty()) {
-            this.photos.add(room.getPhoto1());
-        }
-        if (room.getPhoto2() != null && !room.getPhoto2().isEmpty()) {
-            this.photos.add(room.getPhoto2());
-        }
-        if (room.getPhoto3() != null && !room.getPhoto3().isEmpty()) {
-            this.photos.add(room.getPhoto3());
-        }
-        if (room.getPhoto4() != null && !room.getPhoto4().isEmpty()) {
-            this.photos.add(room.getPhoto4());
+        if (includePhotos) {
+            if (room.getPhoto1() != null && !room.getPhoto1().isEmpty()) {
+                this.photos.add(room.getPhoto1());
+            }
+            if (room.getPhoto2() != null && !room.getPhoto2().isEmpty()) {
+                this.photos.add(room.getPhoto2());
+            }
+            if (room.getPhoto3() != null && !room.getPhoto3().isEmpty()) {
+                this.photos.add(room.getPhoto3());
+            }
+            if (room.getPhoto4() != null && !room.getPhoto4().isEmpty()) {
+                this.photos.add(room.getPhoto4());
+            }
         }
     }
 }

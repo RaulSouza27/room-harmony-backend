@@ -3,6 +3,7 @@ package com.clinica.escuta.controller;
 import com.clinica.escuta.DTO.ReservationDTO;
 import com.clinica.escuta.model.Reservation;
 import com.clinica.escuta.repository.ReservationRepository;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
@@ -134,13 +135,67 @@ public class ReservationsController {
     }
 
     @GetMapping("/readAll")
-    public ResponseEntity<List<ReservationDTO>> readAll() {
-        List<Reservation> all = reservationRepository.findAll();
+    public ResponseEntity<List<ReservationDTO>> readAll(
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate endDate,
+            @RequestParam(required = false) Integer userId,
+            @RequestParam(required = false) Integer roomId,
+            @RequestParam(required = false) Integer unitId,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false, defaultValue = "false") boolean includeReceipt
+    ) {
+        List<Reservation> all;
+        if (startDate != null && endDate != null) {
+            all = reservationRepository.findByDataBetween(startDate, endDate);
+        } else if (userId != null) {
+            all = reservationRepository.findByUserId(userId);
+        } else if (roomId != null) {
+            all = reservationRepository.findByRoomsId(roomId);
+        } else {
+            all = reservationRepository.findAll();
+        }
+
         List<ReservationDTO> list = new ArrayList<>();
         for (Reservation r : all) {
-            list.add(new ReservationDTO(r));
+            ReservationDTO dto = new ReservationDTO(r, includeReceipt);
+
+            if (status != null && !status.trim().isEmpty()) {
+                if (!status.equalsIgnoreCase(dto.getStatusString())) {
+                    continue;
+                }
+            }
+
+            if (roomId != null && !r.getRoomsId().equals(roomId)) {
+                continue;
+            }
+
+            if (userId != null && !r.getUserId().equals(userId)) {
+                continue;
+            }
+
+            if (unitId != null) {
+                Optional<com.clinica.escuta.model.Room> roomOpt = roomRepository.findById(r.getRoomsId());
+                if (roomOpt.isEmpty() || !roomOpt.get().getUnitId().equals(unitId)) {
+                    continue;
+                }
+            }
+
+            list.add(dto);
         }
         return ResponseEntity.ok(list);
+    }
+
+    @GetMapping("/{id}/receipt")
+    public ResponseEntity<?> getReceipt(@PathVariable Integer id) {
+        Optional<Reservation> reservationOpt = reservationRepository.findById(id);
+        if (reservationOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        Reservation r = reservationOpt.get();
+        java.util.Map<String, String> result = new java.util.HashMap<>();
+        result.put("id", String.valueOf(r.getId()));
+        result.put("depositImage", r.getDepositImage() != null ? r.getDepositImage() : "empty");
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping("/{id}")

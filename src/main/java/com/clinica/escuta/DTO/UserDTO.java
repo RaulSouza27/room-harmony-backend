@@ -27,6 +27,10 @@ public class UserDTO {
     }
 
     public UserDTO(User user) {
+        this(user, true);
+    }
+
+    public UserDTO(User user, boolean includePhoto) {
         this.id = user.getId();
         this.username = user.getUsername();
         this.email = user.getEmail();
@@ -39,7 +43,7 @@ public class UserDTO {
         this.cpf = user.getCpf();
         this.address = user.getAddress();
         this.cep = user.getCep();
-        this.photo = user.getPhoto();
+        this.photo = includePhoto ? user.getPhoto() : (user.getPhoto() != null && !user.getPhoto().isEmpty() ? "has_photo" : null);
         this.boardNumber = user.getBoardNumber();
     }
 }

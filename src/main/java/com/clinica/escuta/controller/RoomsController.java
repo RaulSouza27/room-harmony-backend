@@ -51,13 +51,15 @@ public class RoomsController {
     }
 
     @GetMapping("/readAll")
-    public ResponseEntity<List<RoomDTO>> readAll() {
+    public ResponseEntity<List<RoomDTO>> readAll(
+            @RequestParam(required = false, defaultValue = "false") boolean includePhotos
+    ) {
         List<RoomDTO> list = new ArrayList<>();
         for (Room r : roomRepository.findByStatusTrue()) {
-            list.add(new RoomDTO(r));
+            list.add(new RoomDTO(r, includePhotos));
         }
         for (Room r : roomRepository.findByStatusFalse()) {
-            list.add(new RoomDTO(r));
+            list.add(new RoomDTO(r, includePhotos));
         }
         return ResponseEntity.ok(list);
     }
