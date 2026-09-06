@@ -47,6 +47,14 @@ public class UsersController {
         return ResponseEntity.ok(users);
     }
 
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{id}")
+    public ResponseEntity<?> getUserById(@PathVariable Integer id) {
+        return userRepository.findById(id)
+                .map(u -> ResponseEntity.ok(new UserDTO(u, true)))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
     @PostMapping
     public ResponseEntity<?> createUser(@RequestBody UserDTO request) {
         if (request.getUsername() == null || request.getEmail() == null) {
