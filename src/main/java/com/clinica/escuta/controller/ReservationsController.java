@@ -20,14 +20,17 @@ public class ReservationsController {
     private final ReservationRepository reservationRepository;
     private final com.clinica.escuta.repository.RoomRepository roomRepository;
     private final com.clinica.escuta.repository.UnitRepository unitRepository;
+    private final com.clinica.escuta.repository.HolidayRepository holidayRepository;
 
     public ReservationsController(
             ReservationRepository reservationRepository,
             com.clinica.escuta.repository.RoomRepository roomRepository,
-            com.clinica.escuta.repository.UnitRepository unitRepository) {
+            com.clinica.escuta.repository.UnitRepository unitRepository,
+            com.clinica.escuta.repository.HolidayRepository holidayRepository) {
         this.reservationRepository = reservationRepository;
         this.roomRepository = roomRepository;
         this.unitRepository = unitRepository;
+        this.holidayRepository = holidayRepository;
     }
 
     @PostMapping
@@ -303,6 +306,16 @@ public class ReservationsController {
             return false;
         }
         com.clinica.escuta.model.Unit unit = unitOpt.get();
+
+        // Check if date falls on an active holiday for this unit or global holiday
+        List<com.clinica.escuta.model.Holiday> activeHolidays = holidayRepository.findByStatusTrue();
+        for (com.clinica.escuta.model.Holiday h : activeHolidays) {
+            if (!date.isBefore(h.getStartDate()) && !date.isAfter(h.getEndDate())) {
+                if (h.getUnitId() == null || h.getUnitId().equals(unit.getId())) {
+                    return false;
+                }
+            }
+        }
 
         java.util.Map<String, com.clinica.escuta.DTO.DayScheduleDTO> hours = unit.getBusinessHours();
         if (hours == null || hours.isEmpty()) {
