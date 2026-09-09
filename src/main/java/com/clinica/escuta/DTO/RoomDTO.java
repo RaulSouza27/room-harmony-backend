@@ -16,9 +16,11 @@ public class RoomDTO {
     private String description;
     private String comments;
     private List<String> photos;
+    private Integer photoCount;
 
     public RoomDTO() {
         this.photos = new ArrayList<>();
+        this.photoCount = 0;
     }
 
     public RoomDTO(Room room) {
@@ -33,6 +35,13 @@ public class RoomDTO {
         this.description = room.getDescription();
         this.comments = room.getComments();
         
+        int count = 0;
+        if (room.getPhoto1() != null && !room.getPhoto1().isEmpty()) count++;
+        if (room.getPhoto2() != null && !room.getPhoto2().isEmpty()) count++;
+        if (room.getPhoto3() != null && !room.getPhoto3().isEmpty()) count++;
+        if (room.getPhoto4() != null && !room.getPhoto4().isEmpty()) count++;
+        this.photoCount = count;
+
         this.photos = new ArrayList<>();
         if (includePhotos) {
             if (room.getPhoto1() != null && !room.getPhoto1().isEmpty()) {

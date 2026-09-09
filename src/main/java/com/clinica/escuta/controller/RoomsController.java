@@ -8,7 +8,9 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @CrossOrigin(origins = "*")
@@ -69,6 +71,30 @@ public class RoomsController {
         return roomRepository.findById(id)
                 .map(room -> ResponseEntity.ok(new RoomDTO(room)))
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/{id}/photo/{index}")
+    public ResponseEntity<?> getRoomPhoto(@PathVariable Integer id, @PathVariable int index) {
+        Optional<Room> roomOpt = roomRepository.findById(id);
+        if (roomOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        Room room = roomOpt.get();
+        List<String> validPhotos = new ArrayList<>();
+        if (room.getPhoto1() != null && !room.getPhoto1().isEmpty()) validPhotos.add(room.getPhoto1());
+        if (room.getPhoto2() != null && !room.getPhoto2().isEmpty()) validPhotos.add(room.getPhoto2());
+        if (room.getPhoto3() != null && !room.getPhoto3().isEmpty()) validPhotos.add(room.getPhoto3());
+        if (room.getPhoto4() != null && !room.getPhoto4().isEmpty()) validPhotos.add(room.getPhoto4());
+
+        if (index < 0 || index >= validPhotos.size()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("photo", validPhotos.get(index));
+        response.put("index", index);
+        response.put("total", validPhotos.size());
+        return ResponseEntity.ok(response);
     }
 
     @PreAuthorize("hasAuthority('admin')")
