@@ -42,4 +42,22 @@ public class User {
 
     @Column(nullable = false)
     private Boolean mustCompleteTour = true;
+
+    @Column(nullable = false, length = 20)
+    private String phone;
+
+    @Column(nullable = false, length = 11)
+    private String cpf;
+
+    @Column(nullable = false, length = 50)
+    private String address;
+
+    @Column(nullable = false, length = 8)
+    private String cep;
+
+    @Column(columnDefinition = "TEXT")
+    private String photo;
+
+    @Column(name = "board_number", nullable = false, length = 11)
+    private String boardNumber;
 }

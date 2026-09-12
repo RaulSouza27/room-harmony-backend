@@ -37,9 +37,10 @@ public class UnitsController {
         unit.setName(request.getName());
         unit.setAddress(request.getAddress());
         unit.setStatus(request.isStatus());
+        unit.setBusinessHours(request.getBusinessHours() != null ? request.getBusinessHours() : UnitDTO.createDefaultBusinessHours());
 
         Unit savedUnit = unitRepository.save(unit);
-        return ResponseEntity.ok(savedUnit);
+        return ResponseEntity.ok(new UnitDTO(savedUnit));
     }
 
 
@@ -91,6 +92,9 @@ public class UnitsController {
             unit.setAddress(request.getAddress());
         }
         unit.setStatus(request.isStatus());
+        if (request.getBusinessHours() != null) {
+            unit.setBusinessHours(request.getBusinessHours());
+        }
 
         Unit updatedUser = unitRepository.save(unit);
         return ResponseEntity.ok(new UnitDTO(updatedUser));
