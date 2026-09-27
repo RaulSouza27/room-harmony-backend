@@ -1,5 +1,6 @@
 package com.clinica.escuta.controller;
 
+import com.clinica.escuta.annotation.Auditable;
 import com.clinica.escuta.DTO.UserDTO;
 import com.clinica.escuta.model.User;
 import com.clinica.escuta.repository.UserRepository;
@@ -55,6 +56,7 @@ public class UsersController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    @Auditable(action = "GERACAO_LICENCA_USUARIO", targetType = "USUARIO")
     @PostMapping
     public ResponseEntity<?> createUser(@RequestBody UserDTO request) {
         if (request.getUsername() == null || request.getEmail() == null) {
@@ -100,6 +102,7 @@ public class UsersController {
         return ResponseEntity.ok(new UserDTO(saved));
     }
 
+    @Auditable(action = "ALTERACAO_USUARIO", targetType = "USUARIO")
     @PreAuthorize("isAuthenticated()")
     @PutMapping("/{id}")
     public ResponseEntity<?> updateUser(@PathVariable Integer id, @RequestBody UserDTO request, Authentication authentication) {
@@ -180,6 +183,7 @@ public class UsersController {
         return ResponseEntity.ok(new UserDTO(saved));
     }
 
+    @Auditable(action = "RESET_SENHA_USUARIO", targetType = "USUARIO")
     @PreAuthorize("hasAuthority('admin')")
     @PostMapping("/{id}/reset-password")
     public ResponseEntity<?> resetUserPassword(@PathVariable Integer id) {
@@ -216,6 +220,7 @@ public class UsersController {
         ));
     }
 
+    @Auditable(action = "PRIMEIRO_ACESSO_SENHA", targetType = "USUARIO")
     @PreAuthorize("isAuthenticated()")
     @PutMapping("/{id}/first-login")
     public ResponseEntity<?> resetPasswordFirstLogin(

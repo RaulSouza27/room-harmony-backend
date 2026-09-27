@@ -1,5 +1,6 @@
 package com.clinica.escuta.controller;
 
+import com.clinica.escuta.annotation.Auditable;
 import com.clinica.escuta.DTO.ReservationDTO;
 import com.clinica.escuta.model.Reservation;
 import com.clinica.escuta.repository.ReservationRepository;
@@ -33,6 +34,7 @@ public class ReservationsController {
         this.holidayRepository = holidayRepository;
     }
 
+    @Auditable(action = "SOLICITACAO_RESERVA", targetType = "RESERVA")
     @PostMapping
     public ResponseEntity<?> createReservation(@RequestBody ReservationDTO request) {
         if (request.getRoomsId() == null || request.getUserId() == null || request.getData() == null ||
@@ -208,6 +210,7 @@ public class ReservationsController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    @Auditable(action = "ALTERACAO_RESERVA", targetType = "RESERVA")
     @PutMapping("/{id}")
     public ResponseEntity<?> updateReservation(@PathVariable Integer id, @RequestBody ReservationDTO request) {
         Optional<Reservation> reservationOpt = reservationRepository.findById(id);
@@ -268,6 +271,7 @@ public class ReservationsController {
         return ResponseEntity.ok(new ReservationDTO(saved));
     }
 
+    @Auditable(action = "EXCLUSAO_RESERVA", targetType = "RESERVA")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteReservation(@PathVariable Integer id) {
         if (!reservationRepository.existsById(id)) {
@@ -277,6 +281,7 @@ public class ReservationsController {
         return ResponseEntity.ok("Reservation deleted successfully.");
     }
 
+    @Auditable(action = "EXCLUSAO_LOTE_RESERVA", targetType = "RESERVA")
     @PostMapping("/delete-batch")
     public ResponseEntity<?> deleteReservationsBatch(@RequestBody List<Integer> ids) {
         if (ids == null || ids.isEmpty()) {
