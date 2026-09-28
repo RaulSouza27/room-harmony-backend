@@ -1,12 +1,15 @@
 package com.clinica.escuta.DTO;
 
 import com.clinica.escuta.model.Profissions;
+import lombok.AllArgsConstructor;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Getter
 @Setter
-
+@NoArgsConstructor
+@AllArgsConstructor
 public class ProfissionsDTO {
     private Integer id;
     private String profission;

@@ -1,5 +1,6 @@
 package com.clinica.escuta.controller;
 
+import com.clinica.escuta.annotation.Auditable;
 import com.clinica.escuta.DTO.RoomDTO;
 import com.clinica.escuta.model.Room;
 import com.clinica.escuta.repository.RoomRepository;
@@ -24,6 +25,7 @@ public class RoomsController {
         this.roomRepository = roomRepository;
     }
 
+    @Auditable(action = "CRIACAO_SALA", targetType = "SALA")
     @PreAuthorize("hasAuthority('admin')")
     @PostMapping
     public ResponseEntity<?> createRoom(@RequestBody RoomDTO request) {
@@ -97,6 +99,7 @@ public class RoomsController {
         return ResponseEntity.ok(response);
     }
 
+    @Auditable(action = "ALTERACAO_SALA", targetType = "SALA")
     @PreAuthorize("hasAuthority('admin')")
     @PutMapping("/{id}")
     public ResponseEntity<?> updateRoom(@PathVariable Integer id, @RequestBody RoomDTO request) {
@@ -134,6 +137,7 @@ public class RoomsController {
         return ResponseEntity.ok(new RoomDTO(saved));
     }
 
+    @Auditable(action = "DESATIVACAO_SALA", targetType = "SALA")
     @PreAuthorize("hasAuthority('admin')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> InactivateRoom(@PathVariable Integer id) {

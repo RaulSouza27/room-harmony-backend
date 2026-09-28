@@ -1,5 +1,6 @@
 package com.clinica.escuta.controller;
 
+import com.clinica.escuta.annotation.Auditable;
 import com.clinica.escuta.DTO.UnitDTO;
 import com.clinica.escuta.model.Unit;
 import com.clinica.escuta.repository.UnitRepository;
@@ -22,6 +23,7 @@ public class UnitsController {
         this.unitRepository = unitRepository;
     }
 
+    @Auditable(action = "CRIACAO_UNIDADE", targetType = "UNIDADE")
     @PreAuthorize("hasAuthority('admin')")
     @PostMapping
     public ResponseEntity<?> createUnit(@RequestBody UnitDTO request) {
@@ -72,6 +74,7 @@ public class UnitsController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    @Auditable(action = "ALTERACAO_UNIDADE", targetType = "UNIDADE")
     @PreAuthorize("hasAuthority('admin')")
     @PutMapping("/{id}")
     public ResponseEntity<?> updateUnit(@PathVariable Integer id, @RequestBody UnitDTO request) {
@@ -100,6 +103,7 @@ public class UnitsController {
         return ResponseEntity.ok(new UnitDTO(updatedUser));
     }
 
+    @Auditable(action = "DESATIVACAO_UNIDADE", targetType = "UNIDADE")
     @PreAuthorize("hasAuthority('admin')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> InactivateUnit(@PathVariable Integer id) {
