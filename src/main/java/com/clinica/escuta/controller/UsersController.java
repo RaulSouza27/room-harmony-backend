@@ -74,7 +74,7 @@ public class UsersController {
         User user = new User();
         user.setUsername(request.getUsername());
         user.setEmail(request.getEmail());
-        user.setPasswordHash(passwordEncoder.encode(request.getPassword() != null ? request.getPassword() : "psi123"));
+        user.setPasswordHash(passwordEncoder.encode(request.getPassword() != null ? request.getPassword() : defaultPassword));
         user.setStatus(request.getStatus() != null ? request.getStatus() : true);
         String accessLevel = request.getAccessLevel();
         if (accessLevel == null || (!accessLevel.equals("admin") && !accessLevel.equals("psi"))) {
