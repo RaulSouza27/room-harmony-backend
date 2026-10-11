@@ -230,6 +230,22 @@ public class ReservationsController {
         }
 
         Reservation r = reservationOpt.get();
+
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        boolean isUpdaterAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> "admin".equals(a.getAuthority()));
+
+        // Validação da regra de 24h de antecedência para solicitação de cancelamento por locatário
+        if ("solicitacao_cancelamento".equals(request.getStatusString()) && !isUpdaterAdmin) {
+            java.time.LocalDateTime reservationStart = r.getData().atTime(r.getHoraInicio());
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            if (now.plusHours(24).isAfter(reservationStart)) {
+                return ResponseEntity.badRequest().body("Solicitações de cancelamento só podem ser feitas com no mínimo 24 horas de antecedência.");
+            }
+        }
+
+        if ("cancelada".equals(request.getStatusString()) && !isUpdaterAdmin && "aprovada".equals(getStatusFromComments(r.getComments()))) {
+            return ResponseEntity.badRequest().body("Locatários não podem cancelar reservas aprovadas diretamente. Solicite o cancelamento ao administrador.");
+        }
         
         boolean isDateTimeOrRoomChanged = (request.getData() != null && !request.getData().equals(r.getData()))
                 || (request.getHoraInicio() != null && !request.getHoraInicio().equals(r.getHoraInicio()))
@@ -254,9 +270,6 @@ public class ReservationsController {
             }
 
             // Validate duration
-            org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-            boolean isUpdaterAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> "admin".equals(a.getAuthority()));
-
             if (!isUpdaterAdmin) {
                 if ("semanal_anual".equals(recorrencia) || "turno".equals(recorrencia)) {
                     if (!targetStart.plusHours(4).equals(targetEnd)) {
