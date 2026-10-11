@@ -4,6 +4,7 @@ import com.clinica.escuta.annotation.Auditable;
 import com.clinica.escuta.DTO.ReservationDTO;
 import com.clinica.escuta.model.Reservation;
 import com.clinica.escuta.repository.ReservationRepository;
+import com.clinica.escuta.service.TelegramNotificationService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -22,16 +23,19 @@ public class ReservationsController {
     private final com.clinica.escuta.repository.RoomRepository roomRepository;
     private final com.clinica.escuta.repository.UnitRepository unitRepository;
     private final com.clinica.escuta.repository.HolidayRepository holidayRepository;
+    private final TelegramNotificationService telegramNotificationService;
 
     public ReservationsController(
             ReservationRepository reservationRepository,
             com.clinica.escuta.repository.RoomRepository roomRepository,
             com.clinica.escuta.repository.UnitRepository unitRepository,
-            com.clinica.escuta.repository.HolidayRepository holidayRepository) {
+            com.clinica.escuta.repository.HolidayRepository holidayRepository,
+            TelegramNotificationService telegramNotificationService) {
         this.reservationRepository = reservationRepository;
         this.roomRepository = roomRepository;
         this.unitRepository = unitRepository;
         this.holidayRepository = holidayRepository;
+        this.telegramNotificationService = telegramNotificationService;
     }
 
     @Auditable(action = "SOLICITACAO_RESERVA", targetType = "RESERVA")
@@ -60,15 +64,17 @@ public class ReservationsController {
         // Determine recurrence string (default to "unica")
         String recorrencia = request.getRecorrencia() != null ? request.getRecorrencia() : "unica";
 
-        // Validate duration
-        if ("semanal_anual".equals(recorrencia) || "turno".equals(recorrencia)) {
-            if (!request.getHoraInicio().plusHours(4).equals(request.getHoraFim())) {
-                return ResponseEntity.badRequest().body("Turnos devem ter a duração exata de 4 horas.");
-            }
-        } else {
-            // "unica" or "semanal_mensal" / "avulsa_fixa"
-            if (!request.getHoraInicio().plusHours(1).equals(request.getHoraFim())) {
-                return ResponseEntity.badRequest().body("Reservas avulsas devem ter a duração exata de 1 hora.");
+        // Validate duration (bypassed for Admins so they can create generic special reservations with any duration)
+        if (!isCreatorAdmin) {
+            if ("semanal_anual".equals(recorrencia) || "turno".equals(recorrencia)) {
+                if (!request.getHoraInicio().plusHours(4).equals(request.getHoraFim())) {
+                    return ResponseEntity.badRequest().body("Turnos devem ter a duração exata de 4 horas.");
+                }
+            } else {
+                // "unica" or "semanal_mensal" / "avulsa_fixa"
+                if (!request.getHoraInicio().plusHours(1).equals(request.getHoraFim())) {
+                    return ResponseEntity.badRequest().body("Reservas avulsas devem ter a duração exata de 1 hora.");
+                }
             }
         }
 
@@ -136,7 +142,12 @@ public class ReservationsController {
         if (savedList.isEmpty()) {
             return ResponseEntity.badRequest().body("Nenhuma reserva pôde ser gerada.");
         }
-        return ResponseEntity.ok(new ReservationDTO(savedList.get(0)));
+
+        ReservationDTO resultDTO = new ReservationDTO(savedList.get(0));
+        boolean isSpecial = "reserva_especial_admin".equalsIgnoreCase(request.getDepositImage());
+        telegramNotificationService.notifyNewReservation(resultDTO, isSpecial);
+
+        return ResponseEntity.ok(resultDTO);
     }
 
     @GetMapping("/readAll")
@@ -219,6 +230,22 @@ public class ReservationsController {
         }
 
         Reservation r = reservationOpt.get();
+
+        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        boolean isUpdaterAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> "admin".equals(a.getAuthority()));
+
+        // Validação da regra de 24h de antecedência para solicitação de cancelamento por locatário
+        if ("solicitacao_cancelamento".equals(request.getStatusString()) && !isUpdaterAdmin) {
+            java.time.LocalDateTime reservationStart = r.getData().atTime(r.getHoraInicio());
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            if (now.plusHours(24).isAfter(reservationStart)) {
+                return ResponseEntity.badRequest().body("Solicitações de cancelamento só podem ser feitas com no mínimo 24 horas de antecedência.");
+            }
+        }
+
+        if ("cancelada".equals(request.getStatusString()) && !isUpdaterAdmin && "aprovada".equals(getStatusFromComments(r.getComments()))) {
+            return ResponseEntity.badRequest().body("Locatários não podem cancelar reservas aprovadas diretamente. Solicite o cancelamento ao administrador.");
+        }
         
         boolean isDateTimeOrRoomChanged = (request.getData() != null && !request.getData().equals(r.getData()))
                 || (request.getHoraInicio() != null && !request.getHoraInicio().equals(r.getHoraInicio()))
@@ -243,13 +270,15 @@ public class ReservationsController {
             }
 
             // Validate duration
-            if ("semanal_anual".equals(recorrencia) || "turno".equals(recorrencia)) {
-                if (!targetStart.plusHours(4).equals(targetEnd)) {
-                    return ResponseEntity.badRequest().body("Turnos devem ter a duração exata de 4 horas.");
-                }
-            } else {
-                if (!targetStart.plusHours(1).equals(targetEnd)) {
-                    return ResponseEntity.badRequest().body("Reservas avulsas devem ter a duração exata de 1 hora.");
+            if (!isUpdaterAdmin) {
+                if ("semanal_anual".equals(recorrencia) || "turno".equals(recorrencia)) {
+                    if (!targetStart.plusHours(4).equals(targetEnd)) {
+                        return ResponseEntity.badRequest().body("Turnos devem ter a duração exata de 4 horas.");
+                    }
+                } else {
+                    if (!targetStart.plusHours(1).equals(targetEnd)) {
+                        return ResponseEntity.badRequest().body("Reservas avulsas devem ter a duração exata de 1 hora.");
+                    }
                 }
             }
 
