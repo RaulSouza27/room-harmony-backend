@@ -3,8 +3,13 @@ package com.clinica.escuta.controller;
 import com.clinica.escuta.annotation.Auditable;
 import com.clinica.escuta.DTO.ReservationDTO;
 import com.clinica.escuta.model.Reservation;
+import com.clinica.escuta.model.User;
 import com.clinica.escuta.repository.ReservationRepository;
+import com.clinica.escuta.repository.UserRepository;
 import com.clinica.escuta.service.TelegramNotificationService;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -24,18 +29,32 @@ public class ReservationsController {
     private final com.clinica.escuta.repository.UnitRepository unitRepository;
     private final com.clinica.escuta.repository.HolidayRepository holidayRepository;
     private final TelegramNotificationService telegramNotificationService;
+    private final UserRepository userRepository;
 
     public ReservationsController(
             ReservationRepository reservationRepository,
             com.clinica.escuta.repository.RoomRepository roomRepository,
             com.clinica.escuta.repository.UnitRepository unitRepository,
             com.clinica.escuta.repository.HolidayRepository holidayRepository,
-            TelegramNotificationService telegramNotificationService) {
+            TelegramNotificationService telegramNotificationService,
+            UserRepository userRepository) {
         this.reservationRepository = reservationRepository;
         this.roomRepository = roomRepository;
         this.unitRepository = unitRepository;
         this.holidayRepository = holidayRepository;
         this.telegramNotificationService = telegramNotificationService;
+        this.userRepository = userRepository;
+    }
+
+    private static boolean isAdmin(Authentication auth) {
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> "admin".equals(a.getAuthority()));
+    }
+
+    /** Resolve o id do usuário autenticado a partir do username guardado no JWT. */
+    private Integer getAuthenticatedUserId(Authentication auth) {
+        if (auth == null || auth.getName() == null) return null;
+        return userRepository.findByUsername(auth.getName()).map(User::getId).orElse(null);
     }
 
     @Auditable(action = "SOLICITACAO_RESERVA", targetType = "RESERVA")
@@ -47,9 +66,18 @@ public class ReservationsController {
         }
 
         // Check if creator is admin from SecurityContext
-        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-        boolean isCreatorAdmin = auth != null && auth.getAuthorities().stream()
-                .anyMatch(a -> "admin".equals(a.getAuthority()));
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        boolean isCreatorAdmin = isAdmin(auth);
+
+        // Non-admins can only create reservations for themselves
+        Integer authenticatedUserId = null;
+        if (!isCreatorAdmin) {
+            authenticatedUserId = getAuthenticatedUserId(auth);
+            if (authenticatedUserId == null) {
+                return ResponseEntity.status(403).body("Usuário autenticado não encontrado.");
+            }
+        }
+        Integer ownerUserId = isCreatorAdmin ? request.getUserId() : authenticatedUserId;
 
         // If the creator is not admin, require depositImage (receipt)
         if (!isCreatorAdmin && (request.getDepositImage() == null || request.getDepositImage().trim().isEmpty() || "empty".equalsIgnoreCase(request.getDepositImage().trim()))) {
@@ -110,21 +138,27 @@ public class ReservationsController {
             if (current.getDayOfWeek() != java.time.DayOfWeek.SUNDAY) {
                 Reservation reservation = new Reservation();
                 reservation.setRoomsId(request.getRoomsId());
-                reservation.setUserId(request.getUserId());
+                reservation.setUserId(ownerUserId);
                 reservation.setData(current);
                 reservation.setHoraInicio(request.getHoraInicio());
                 reservation.setHoraFim(request.getHoraFim());
                 reservation.setDepositImage(request.getDepositImage() != null && !request.getDepositImage().isEmpty() ? request.getDepositImage() : "empty");
                 reservation.setDescription(request.getDescription());
                 
-                String statusVal = request.getStatusString() != null ? request.getStatusString() : "pendente";
+                // SECURITY: status/approval are decided by the server, never trusted from the client.
+                String statusVal;
+                String motivoVal;
+                String aprovadoVal;
                 if (isCreatorAdmin) {
                     statusVal = "aprovada";
-                }
-                String motivoVal = request.getMotivoNegacao() != null ? request.getMotivoNegacao() : "";
-                String aprovadoVal = request.getAprovadoPor() != null ? request.getAprovadoPor() : "";
-                if (isCreatorAdmin && (aprovadoVal == null || aprovadoVal.isEmpty())) {
-                    aprovadoVal = auth != null ? auth.getName() : "admin";
+                    motivoVal = request.getMotivoNegacao() != null ? request.getMotivoNegacao() : "";
+                    aprovadoVal = request.getAprovadoPor() != null && !request.getAprovadoPor().isEmpty()
+                            ? request.getAprovadoPor()
+                            : (auth != null ? auth.getName() : "admin");
+                } else {
+                    statusVal = "pendente";
+                    motivoVal = "";
+                    aprovadoVal = "";
                 }
                 
                 reservation.setComments(statusVal + "|" + motivoVal + "|" + aprovadoVal + "|" + recorrencia);
@@ -231,8 +265,23 @@ public class ReservationsController {
 
         Reservation r = reservationOpt.get();
 
-        org.springframework.security.core.Authentication auth = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-        boolean isUpdaterAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> "admin".equals(a.getAuthority()));
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        boolean isUpdaterAdmin = isAdmin(auth);
+
+        if (!isUpdaterAdmin) {
+            // Non-admins may only touch their own reservations
+            Integer authenticatedUserId = getAuthenticatedUserId(auth);
+            if (authenticatedUserId == null || !authenticatedUserId.equals(r.getUserId())) {
+                return ResponseEntity.status(403).body("Você não tem permissão para alterar esta reserva.");
+            }
+            // Non-admins may only request cancellation or cancel (pending) reservations
+            String requestedStatus = request.getStatusString();
+            if (requestedStatus != null
+                    && !"solicitacao_cancelamento".equals(requestedStatus)
+                    && !"cancelada".equals(requestedStatus)) {
+                return ResponseEntity.status(403).body("Locatários não podem alterar o status da reserva para '" + requestedStatus + "'.");
+            }
+        }
 
         // Validação da regra de 24h de antecedência para solicitação de cancelamento por locatário
         if ("solicitacao_cancelamento".equals(request.getStatusString()) && !isUpdaterAdmin) {
@@ -289,7 +338,7 @@ public class ReservationsController {
         }
 
         if (request.getRoomsId() != null) r.setRoomsId(request.getRoomsId());
-        if (request.getUserId() != null) r.setUserId(request.getUserId());
+        if (isUpdaterAdmin && request.getUserId() != null) r.setUserId(request.getUserId());
         if (request.getData() != null) r.setData(request.getData());
         if (request.getHoraInicio() != null) r.setHoraInicio(request.getHoraInicio());
         if (request.getHoraFim() != null) r.setHoraFim(request.getHoraFim());
@@ -297,8 +346,21 @@ public class ReservationsController {
         if (request.getDescription() != null) r.setDescription(request.getDescription());
         
         String statusVal = request.getStatusString() != null ? request.getStatusString() : getStatusFromComments(r.getComments());
-        String motivoVal = request.getMotivoNegacao() != null ? request.getMotivoNegacao() : getMotivoFromComments(r.getComments());
-        String aprovadoVal = request.getAprovadoPor() != null ? request.getAprovadoPor() : getAprovadoFromComments(r.getComments());
+        String motivoVal;
+        String aprovadoVal;
+        if (isUpdaterAdmin) {
+            motivoVal = request.getMotivoNegacao() != null ? request.getMotivoNegacao() : getMotivoFromComments(r.getComments());
+            aprovadoVal = request.getAprovadoPor() != null ? request.getAprovadoPor() : getAprovadoFromComments(r.getComments());
+        } else {
+            // Non-admins cannot forge approval data
+            motivoVal = getMotivoFromComments(r.getComments());
+            aprovadoVal = getAprovadoFromComments(r.getComments());
+            // Any date/time/room change by a tenant requires new admin approval
+            if (isDateTimeOrRoomChanged && request.getStatusString() == null) {
+                statusVal = "pendente";
+                aprovadoVal = "";
+            }
+        }
         
         r.setComments(statusVal + "|" + motivoVal + "|" + aprovadoVal + "|" + recorrencia);
         r.setStatus(!"cancelada".equals(statusVal) && !"negada".equals(statusVal));
@@ -308,6 +370,7 @@ public class ReservationsController {
     }
 
     @Auditable(action = "EXCLUSAO_RESERVA", targetType = "RESERVA")
+    @PreAuthorize("hasAuthority('admin')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteReservation(@PathVariable Integer id) {
         if (!reservationRepository.existsById(id)) {
@@ -318,6 +381,7 @@ public class ReservationsController {
     }
 
     @Auditable(action = "EXCLUSAO_LOTE_RESERVA", targetType = "RESERVA")
+    @PreAuthorize("hasAuthority('admin')")
     @PostMapping("/delete-batch")
     public ResponseEntity<?> deleteReservationsBatch(@RequestBody List<Integer> ids) {
         if (ids == null || ids.isEmpty()) {
