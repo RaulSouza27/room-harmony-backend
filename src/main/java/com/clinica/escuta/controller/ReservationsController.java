@@ -177,7 +177,10 @@ public class ReservationsController {
             return ResponseEntity.badRequest().body("Nenhuma reserva pôde ser gerada.");
         }
 
-        ReservationDTO resultDTO = new ReservationDTO(savedList.get(0));
+        Integer createdUnitId = roomRepository.findById(savedList.get(0).getRoomsId())
+                .map(com.clinica.escuta.model.Room::getUnitId)
+                .orElse(null);
+        ReservationDTO resultDTO = new ReservationDTO(savedList.get(0), true, createdUnitId);
         boolean isSpecial = "reserva_especial_admin".equalsIgnoreCase(request.getDepositImage());
         telegramNotificationService.notifyNewReservation(resultDTO, isSpecial);
 
@@ -205,9 +208,23 @@ public class ReservationsController {
             all = reservationRepository.findAll();
         }
 
+        // Preload roomId -> unitId map in a single query to avoid N+1 roundtrips to remote DB
+        java.util.Map<Integer, Integer> roomUnitMap = new java.util.HashMap<>();
+        for (com.clinica.escuta.model.Room room : roomRepository.findAll()) {
+            roomUnitMap.put(room.getId(), room.getUnitId());
+        }
+
         List<ReservationDTO> list = new ArrayList<>();
         for (Reservation r : all) {
-            ReservationDTO dto = new ReservationDTO(r, includeReceipt);
+            Integer resUnitId = roomUnitMap.get(r.getRoomsId());
+
+            if (unitId != null) {
+                if (resUnitId == null || !resUnitId.equals(unitId)) {
+                    continue;
+                }
+            }
+
+            ReservationDTO dto = new ReservationDTO(r, includeReceipt, resUnitId);
 
             if (status != null && !status.trim().isEmpty()) {
                 if (!status.equalsIgnoreCase(dto.getStatusString())) {
@@ -221,13 +238,6 @@ public class ReservationsController {
 
             if (userId != null && !r.getUserId().equals(userId)) {
                 continue;
-            }
-
-            if (unitId != null) {
-                Optional<com.clinica.escuta.model.Room> roomOpt = roomRepository.findById(r.getRoomsId());
-                if (roomOpt.isEmpty() || !roomOpt.get().getUnitId().equals(unitId)) {
-                    continue;
-                }
             }
 
             list.add(dto);
@@ -251,7 +261,10 @@ public class ReservationsController {
     @GetMapping("/{id}")
     public ResponseEntity<?> getById(@PathVariable Integer id) {
         return reservationRepository.findById(id)
-                .map(r -> ResponseEntity.ok(new ReservationDTO(r)))
+                .map(r -> {
+                    Integer uId = roomRepository.findById(r.getRoomsId()).map(com.clinica.escuta.model.Room::getUnitId).orElse(null);
+                    return ResponseEntity.ok(new ReservationDTO(r, true, uId));
+                })
                 .orElse(ResponseEntity.notFound().build());
     }
 
@@ -366,7 +379,8 @@ public class ReservationsController {
         r.setStatus(!"cancelada".equals(statusVal) && !"negada".equals(statusVal));
 
         Reservation saved = reservationRepository.save(r);
-        return ResponseEntity.ok(new ReservationDTO(saved));
+        Integer savedUnitId = roomRepository.findById(saved.getRoomsId()).map(com.clinica.escuta.model.Room::getUnitId).orElse(null);
+        return ResponseEntity.ok(new ReservationDTO(saved, true, savedUnitId));
     }
 
     @Auditable(action = "EXCLUSAO_RESERVA", targetType = "RESERVA")
@@ -473,15 +487,13 @@ public class ReservationsController {
     }
 
     private boolean hasConflict(Integer roomId, LocalDate date, LocalTime start, LocalTime end, Integer ignoreId) {
-        List<Reservation> activeReservations = reservationRepository.findByStatusTrue();
+        List<Reservation> activeReservations = reservationRepository.findByRoomsIdAndDataAndStatusTrue(roomId, date);
         for (Reservation r : activeReservations) {
             if (r.getId().equals(ignoreId)) {
                 continue;
             }
-            if (r.getRoomsId().equals(roomId) && r.getData().equals(date)) {
-                if (start.isBefore(r.getHoraFim()) && r.getHoraInicio().isBefore(end)) {
-                    return true;
-                }
+            if (start.isBefore(r.getHoraFim()) && r.getHoraInicio().isBefore(end)) {
+                return true;
             }
         }
         return false;

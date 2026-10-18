@@ -11,6 +11,7 @@ import java.time.LocalTime;
 public class ReservationDTO {
     private Integer id;
     private Integer roomsId;
+    private Integer unitId;
     private Integer userId;
     private LocalDate data;
     private LocalTime horaInicio;
@@ -26,12 +27,17 @@ public class ReservationDTO {
     }
 
     public ReservationDTO(Reservation reservation) {
-        this(reservation, true);
+        this(reservation, true, null);
     }
 
     public ReservationDTO(Reservation reservation, boolean includeReceipt) {
+        this(reservation, includeReceipt, null);
+    }
+
+    public ReservationDTO(Reservation reservation, boolean includeReceipt, Integer unitId) {
         this.id = reservation.getId();
         this.roomsId = reservation.getRoomsId();
+        this.unitId = unitId;
         this.userId = reservation.getUserId();
         this.data = reservation.getData();
         this.horaInicio = reservation.getHoraInicio();
