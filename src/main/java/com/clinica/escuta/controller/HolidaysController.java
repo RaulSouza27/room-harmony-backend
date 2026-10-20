@@ -1,6 +1,7 @@
 package com.clinica.escuta.controller;
 
 import com.clinica.escuta.DTO.HolidayDTO;
+import com.clinica.escuta.annotation.Auditable;
 import com.clinica.escuta.model.Holiday;
 import com.clinica.escuta.model.Reservation;
 import com.clinica.escuta.model.Room;
@@ -97,6 +98,7 @@ public class HolidaysController {
     return ResponseEntity.ok(new HolidayDTO(h, uName));
   }
 
+  @Auditable(action = "CRIACAO_FERIADO", targetType = "FERIADO")
   @PostMapping
   public ResponseEntity<?> createHoliday(@RequestBody HolidayDTO dto) {
     if (!isAdmin()) {
@@ -194,6 +196,7 @@ public class HolidaysController {
     }
   }
 
+  @Auditable(action = "ALTERACAO_FERIADO", targetType = "FERIADO")
   @PutMapping("/{id}")
   public ResponseEntity<?> updateHoliday(@PathVariable Integer id,
                                          @RequestBody HolidayDTO dto) {
@@ -246,6 +249,7 @@ public class HolidaysController {
     return ResponseEntity.ok(new HolidayDTO(saved, uName));
   }
 
+  @Auditable(action = "EXCLUSAO_FERIADO", targetType = "FERIADO")
   @DeleteMapping("/{id}")
   public ResponseEntity<?> deleteHoliday(@PathVariable Integer id) {
     if (!isAdmin()) {
