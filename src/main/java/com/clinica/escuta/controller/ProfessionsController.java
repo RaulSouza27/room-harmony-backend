@@ -5,6 +5,7 @@ import com.clinica.escuta.annotation.Auditable;
 import com.clinica.escuta.config.DatabaseSequenceSynchronizer;
 import com.clinica.escuta.model.Profissions;
 import com.clinica.escuta.repository.ProfissionsRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -21,6 +22,11 @@ public class ProfessionsController {
     private final ProfissionsRepository professionsRepository;
     private final DatabaseSequenceSynchronizer sequenceSynchronizer;
 
+    public ProfessionsController(ProfissionsRepository professionsRepository) {
+        this(professionsRepository, null);
+    }
+
+    @Autowired
     public ProfessionsController(
             ProfissionsRepository professionsRepository,
             DatabaseSequenceSynchronizer sequenceSynchronizer
@@ -43,7 +49,9 @@ public class ProfessionsController {
             Profissions saved = professionsRepository.save(entity);
             return ResponseEntity.ok().body(saved);
         } catch (DataIntegrityViolationException ex) {
-            sequenceSynchronizer.syncSequence("professions");
+            if (sequenceSynchronizer != null) {
+                sequenceSynchronizer.syncSequence("professions");
+            }
             Profissions retryEntity = new Profissions();
             retryEntity.setProfission(request.getProfission().trim());
             Profissions saved = professionsRepository.save(retryEntity);
