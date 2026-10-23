@@ -21,7 +21,8 @@ public class DatabaseSequenceSynchronizer implements ApplicationRunner {
             "users",
             "reservations",
             "holidays",
-            "audit_logs"
+            "audit_logs",
+            "complaints"
     );
 
     private final JdbcTemplate jdbcTemplate;
