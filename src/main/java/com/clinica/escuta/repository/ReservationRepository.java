@@ -15,5 +15,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, Intege
     List<Reservation> findByRoomsId(Integer roomsId);
     List<Reservation> findByRoomsIdIn(List<Integer> roomsIds);
     List<Reservation> findByRoomsIdInAndDataBetween(List<Integer> roomsIds, LocalDate startDate, LocalDate endDate);
+    List<Reservation> findByRoomsIdAndDataAndStatusTrue(Integer roomsId, LocalDate data);
+    List<Reservation> findByDataBetweenAndStatusTrue(LocalDate startDate, LocalDate endDate);
 }
 

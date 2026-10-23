@@ -1,95 +1,123 @@
 package com.clinica.escuta.controller;
 
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
 import com.clinica.escuta.DTO.ProfissionsDTO;
+import com.clinica.escuta.config.DatabaseSequenceSynchronizer;
 import com.clinica.escuta.model.Profissions;
 import com.clinica.escuta.repository.ProfissionsRepository;
+import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-
-import java.util.List;
-import java.util.Optional;
-
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class ProfessionsControllerTest {
 
-    @Mock
-    private ProfissionsRepository professionsRepository;
+  @Mock private ProfissionsRepository professionsRepository;
 
-    private ProfessionsController professionsController;
+  @Mock private DatabaseSequenceSynchronizer sequenceSynchronizer;
 
-    @BeforeEach
-    void setUp() {
-        professionsController = new ProfessionsController(professionsRepository);
-    }
+  private ProfessionsController professionsController;
 
-    @Test
-    void shouldCreateProfessionSuccessfully() {
-        ProfissionsDTO dto = new ProfissionsDTO();
-        dto.setProfission("Psicologia");
+  @BeforeEach
+  void setUp() {
+    professionsController =
+        new ProfessionsController(professionsRepository, sequenceSynchronizer);
+  }
 
-        when(professionsRepository.save(any(Profissions.class))).thenAnswer(inv -> {
-            Profissions p = inv.getArgument(0);
-            p.setId(1);
-            return p;
+  @Test
+  void shouldCreateProfessionSuccessfully() {
+    ProfissionsDTO dto = new ProfissionsDTO();
+    dto.setProfission("Psicologia");
+
+    when(professionsRepository.save(any(Profissions.class))).thenAnswer(inv -> {
+      Profissions p = inv.getArgument(0);
+      p.setId(1);
+      return p;
+    });
+
+    ResponseEntity<?> response = professionsController.save(dto);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertTrue(response.getBody() instanceof Profissions);
+    Profissions saved = (Profissions)response.getBody();
+    assertEquals("Psicologia", saved.getProfission());
+  }
+
+  @Test
+  void shouldSyncSequenceAndRetryWhenDuplicateKeyOccursOnSave() {
+    ProfissionsDTO dto = new ProfissionsDTO();
+    dto.setProfission("Terapia Ocupacional");
+
+    when(professionsRepository.save(any(Profissions.class)))
+        .thenThrow(new DataIntegrityViolationException(
+            "duplicate key value violates unique constraint professions_pkey"))
+        .thenAnswer(inv -> {
+          Profissions p = inv.getArgument(0);
+          p.setId(5);
+          return p;
         });
 
-        ResponseEntity<?> response = professionsController.save(dto);
+    ResponseEntity<?> response = professionsController.save(dto);
 
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertTrue(response.getBody() instanceof Profissions);
-        Profissions saved = (Profissions) response.getBody();
-        assertEquals("Psicologia", saved.getProfission());
-    }
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(sequenceSynchronizer, times(1)).syncSequence("professions");
+    verify(professionsRepository, times(2)).save(any(Profissions.class));
+    Profissions saved = (Profissions)response.getBody();
+    assertEquals(5, saved.getId());
+    assertEquals("Terapia Ocupacional", saved.getProfission());
+  }
 
-    @Test
-    void shouldReturnBadRequestWhenProfissionNameMissing() {
-        ProfissionsDTO dto = new ProfissionsDTO();
+  @Test
+  void shouldReturnBadRequestWhenProfissionNameMissing() {
+    ProfissionsDTO dto = new ProfissionsDTO();
 
-        ResponseEntity<?> response = professionsController.save(dto);
+    ResponseEntity<?> response = professionsController.save(dto);
 
-        assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
-    }
+    assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+  }
 
-    @Test
-    void shouldReadAllProfessions() {
-        Profissions p1 = new Profissions();
-        p1.setId(1);
-        p1.setProfission("Fonoaudiologia");
+  @Test
+  void shouldReadAllProfessions() {
+    Profissions p1 = new Profissions();
+    p1.setId(1);
+    p1.setProfission("Fonoaudiologia");
 
-        Profissions p2 = new Profissions();
-        p2.setId(2);
-        p2.setProfission("Psicologia");
+    Profissions p2 = new Profissions();
+    p2.setId(2);
+    p2.setProfission("Psicologia");
 
-        when(professionsRepository.findAllByOrderByProfissionAsc()).thenReturn(List.of(p1, p2));
+    when(professionsRepository.findAllByOrderByProfissionAsc())
+        .thenReturn(List.of(p1, p2));
 
-        ResponseEntity<?> response = professionsController.readAll();
+    ResponseEntity<?> response = professionsController.readAll();
 
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        assertTrue(response.getBody() instanceof List);
-        List<?> list = (List<?>) response.getBody();
-        assertEquals(2, list.size());
-    }
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertTrue(response.getBody() instanceof List);
+    List<?> list = (List<?>)response.getBody();
+    assertEquals(2, list.size());
+  }
 
-    @Test
-    void shouldDeleteProfession() {
-        Profissions p = new Profissions();
-        p.setId(1);
-        p.setProfission("Psicologia");
+  @Test
+  void shouldDeleteProfession() {
+    Profissions p = new Profissions();
+    p.setId(1);
+    p.setProfission("Psicologia");
 
-        when(professionsRepository.findById(1)).thenReturn(Optional.of(p));
+    when(professionsRepository.findById(1)).thenReturn(Optional.of(p));
 
-        ResponseEntity<?> response = professionsController.delete(1);
+    ResponseEntity<?> response = professionsController.delete(1);
 
-        assertEquals(HttpStatus.OK, response.getStatusCode());
-        verify(professionsRepository, times(1)).delete(p);
-    }
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(professionsRepository, times(1)).delete(p);
+  }
 }
