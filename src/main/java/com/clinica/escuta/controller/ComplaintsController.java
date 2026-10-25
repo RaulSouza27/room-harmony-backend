@@ -36,6 +36,8 @@ public class ComplaintsController {
 
     private static final int DAILY_LIMIT = 3;
     private static final int MAX_COMPLAINT_LENGTH = 255;
+    private static final int MIN_RESOLUTION_LENGTH = 5;
+    private static final int MAX_RESOLUTION_LENGTH = 500;
 
     private final ComplaintRepository complaintRepository;
     private final UserRepository userRepository;
@@ -81,6 +83,26 @@ public class ComplaintsController {
                 "limit", DAILY_LIMIT,
                 "remaining", remaining
         ));
+    }
+
+    /**
+     * Lista apenas as manifestações IDENTIFICADAS (user_id != null) do locatário autenticado,
+     * permitindo acompanhar o status e visualizar o parecer de resolução da administração.
+     */
+    @GetMapping("/my")
+    public ResponseEntity<?> readMyIdentifiedComplaints() {
+        Optional<User> currentUser = getAuthenticatedUser();
+        if (currentUser.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Usuário não autenticado.");
+        }
+
+        User author = currentUser.get();
+        List<Complaint> list = complaintRepository.findByUserIdOrderByCreatedAtDesc(author.getId());
+        List<ComplaintDTO> dtos = new ArrayList<>(list.size());
+        for (Complaint c : list) {
+            dtos.add(new ComplaintDTO(c, author));
+        }
+        return ResponseEntity.ok(dtos);
     }
 
     /**
@@ -159,7 +181,7 @@ public class ComplaintsController {
     }
 
     /**
-     * Marca uma reclamação como resolvida ou não resolvida (exclusivo para administradores).
+     * Marca uma reclamação como resolvida (exigindo parecer obrigatório) ou não resolvida (exclusivo para administradores).
      */
     @Auditable(action = "ALTERACAO_STATUS_OUVIDORIA", targetType = "OUVIDORIA")
     @PreAuthorize("hasAuthority('admin')")
@@ -174,10 +196,40 @@ public class ComplaintsController {
         }
 
         Complaint complaint = opt.get();
-        if (request != null && request.getSolved() != null) {
-            complaint.setSolved(request.getSolved());
+        boolean newSolved = (request != null && request.getSolved() != null)
+                ? request.getSolved()
+                : !Boolean.TRUE.equals(complaint.getSolved());
+
+        if (newSolved) {
+            String notes = (request != null && request.getResolutionNotes() != null)
+                    ? request.getResolutionNotes().trim()
+                    : "";
+            if (notes.length() < MIN_RESOLUTION_LENGTH) {
+                return ResponseEntity.badRequest()
+                        .body("É obrigatório informar o parecer de resolução (mínimo de " + MIN_RESOLUTION_LENGTH + " caracteres) para marcar como resolvida.");
+            }
+            if (notes.length() > MAX_RESOLUTION_LENGTH) {
+                return ResponseEntity.badRequest()
+                        .body("O parecer de resolução deve ter no máximo " + MAX_RESOLUTION_LENGTH + " caracteres.");
+            }
+
+            Optional<User> adminUser = getAuthenticatedUser();
+            String resolvedBy = adminUser
+                    .map(u -> u.getUsername() + (u.getEmail() != null ? " (" + u.getEmail() + ")" : ""))
+                    .orElseGet(() -> {
+                        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                        return auth != null && auth.getName() != null ? auth.getName() : "Administrador";
+                    });
+
+            complaint.setSolved(true);
+            complaint.setResolutionNotes(notes);
+            complaint.setResolvedBy(resolvedBy);
+            complaint.setResolvedAt(LocalDateTime.now());
         } else {
-            complaint.setSolved(!Boolean.TRUE.equals(complaint.getSolved()));
+            complaint.setSolved(false);
+            complaint.setResolutionNotes(null);
+            complaint.setResolvedBy(null);
+            complaint.setResolvedAt(null);
         }
 
         Complaint saved = complaintRepository.save(complaint);

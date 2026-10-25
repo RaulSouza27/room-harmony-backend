@@ -9,6 +9,7 @@ import java.util.List;
 @Repository
 public interface ComplaintRepository extends JpaRepository<Complaint, Integer> {
     List<Complaint> findAllByOrderByCreatedAtDesc();
+    List<Complaint> findByUserIdOrderByCreatedAtDesc(Integer userId);
     long countBySenderDailyHash(String senderDailyHash);
 }
 

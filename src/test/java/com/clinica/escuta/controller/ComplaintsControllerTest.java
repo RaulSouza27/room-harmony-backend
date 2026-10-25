@@ -131,7 +131,27 @@ class ComplaintsControllerTest {
     }
 
     @Test
-    void adminCanToggleSolvedStatus() {
+    void adminCannotMarkAsSolvedWithoutResolutionNotes() {
+        loginAs("adminUser", "admin", 1);
+        Complaint existing = new Complaint();
+        existing.setId(7);
+        existing.setUserId(null);
+        existing.setComplaints("Sugestão de melhoria");
+        existing.setSolved(false);
+
+        when(complaintRepository.findById(7)).thenReturn(Optional.of(existing));
+
+        ComplaintDTO req = new ComplaintDTO();
+        req.setSolved(true);
+
+        ResponseEntity<?> resp = controller.updateSolvedStatus(7, req);
+        assertEquals(HttpStatus.BAD_REQUEST, resp.getStatusCode());
+        assertFalse(existing.getSolved());
+        verify(complaintRepository, never()).save(any());
+    }
+
+    @Test
+    void adminCanToggleSolvedStatusWithResolutionNotes() {
         loginAs("adminUser", "admin", 1);
         Complaint existing = new Complaint();
         existing.setId(7);
@@ -144,10 +164,37 @@ class ComplaintsControllerTest {
 
         ComplaintDTO req = new ComplaintDTO();
         req.setSolved(true);
+        req.setResolutionNotes("Trocamos o equipamento e testamos com a equipe.");
 
         ResponseEntity<?> resp = controller.updateSolvedStatus(7, req);
         assertEquals(HttpStatus.OK, resp.getStatusCode());
         assertTrue(existing.getSolved());
+        assertEquals("Trocamos o equipamento e testamos com a equipe.", existing.getResolutionNotes());
+        assertNotNull(existing.getResolvedBy());
+        assertNotNull(existing.getResolvedAt());
+    }
+
+    @Test
+    void tenantCanReadOwnIdentifiedComplaintsWithResolutionFeedback() {
+        loginAs("locador1", "locatario", 10);
+        Complaint c = new Complaint();
+        c.setId(12);
+        c.setUserId(10);
+        c.setComplaints("Lâmpada da Sala 3 piscando.");
+        c.setSolved(true);
+        c.setResolutionNotes("Lâmpada substituída pela manutenção.");
+        c.setResolvedBy("Admin (admin@clinica.com)");
+
+        when(complaintRepository.findByUserIdOrderByCreatedAtDesc(10)).thenReturn(List.of(c));
+
+        ResponseEntity<?> resp = controller.readMyIdentifiedComplaints();
+        assertEquals(HttpStatus.OK, resp.getStatusCode());
+        List<?> list = (List<?>) resp.getBody();
+        assertNotNull(list);
+        assertEquals(1, list.size());
+        ComplaintDTO dto = (ComplaintDTO) list.get(0);
+        assertEquals("Lâmpada substituída pela manutenção.", dto.getResolutionNotes());
+        assertTrue(dto.getSolved());
     }
 }
 
