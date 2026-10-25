@@ -409,6 +409,32 @@ public class ReservationsController {
         return ResponseEntity.ok("Reservations deleted successfully.");
     }
 
+    @Auditable(action = "CANCELAMENTO_LOTE_RESERVA", targetType = "RESERVA")
+    @PreAuthorize("hasAuthority('admin')")
+    @PostMapping("/cancel-batch")
+    public ResponseEntity<?> cancelReservationsBatch(@RequestBody List<Integer> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return ResponseEntity.badRequest().body("No IDs provided.");
+        }
+        List<Reservation> reservations = reservationRepository.findAllById(ids);
+        List<Reservation> toUpdate = new ArrayList<>();
+        for (Reservation r : reservations) {
+            String currentStatus = getStatusFromComments(r.getComments());
+            if (!"cancelada".equalsIgnoreCase(currentStatus)) {
+                String motivoVal = getMotivoFromComments(r.getComments());
+                String aprovadoVal = getAprovadoFromComments(r.getComments());
+                String recorrencia = getRecorrenciaFromComments(r.getComments());
+                r.setComments("cancelada|" + motivoVal + "|" + aprovadoVal + "|" + recorrencia);
+                r.setStatus(false);
+                toUpdate.add(r);
+            }
+        }
+        if (!toUpdate.isEmpty()) {
+            reservationRepository.saveAll(toUpdate);
+        }
+        return ResponseEntity.ok("Reservations cancelled successfully.");
+    }
+
     private boolean isValidWorkingHours(Integer roomId, LocalDate date, LocalTime start, LocalTime end) {
         if (start == null || end == null || start.isAfter(end) || start.equals(end) || roomId == null || date == null) {
             return false;
