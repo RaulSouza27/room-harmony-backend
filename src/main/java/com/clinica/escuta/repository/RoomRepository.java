@@ -1,6 +1,10 @@
 package com.clinica.escuta.repository;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import com.clinica.escuta.model.Room;
 import java.util.List;
@@ -12,4 +16,8 @@ public interface RoomRepository extends JpaRepository<Room, Integer> {
     List<Room> findByStatusTrue();
     List<Room> findByStatusFalse();
     List<Room> findByUnitId(Integer unitId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT r FROM Room r WHERE r.id = :id")
+    Optional<Room> findByIdForUpdate(@Param("id") Integer id);
 }

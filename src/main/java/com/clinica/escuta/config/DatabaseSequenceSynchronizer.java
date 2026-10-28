@@ -22,7 +22,9 @@ public class DatabaseSequenceSynchronizer implements ApplicationRunner {
             "reservations",
             "holidays",
             "audit_logs",
-            "complaints"
+            "complaints",
+            "credit_packages",
+            "credit_transactions"
     );
 
     private final JdbcTemplate jdbcTemplate;

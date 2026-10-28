@@ -10,6 +10,7 @@ import com.clinica.escuta.repository.ReservationRepository;
 import com.clinica.escuta.repository.RoomRepository;
 import com.clinica.escuta.repository.UnitRepository;
 import com.clinica.escuta.repository.UserRepository;
+import com.clinica.escuta.service.CreditService;
 import com.clinica.escuta.service.TelegramNotificationService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,13 +64,14 @@ class ReservationsControllerSecurityTest {
     @Mock private HolidayRepository holidayRepository;
     @Mock private TelegramNotificationService telegramNotificationService;
     @Mock private UserRepository userRepository;
+    @Mock private CreditService creditService;
 
     private ReservationsController controller;
 
     @BeforeEach
     void setUp() {
         controller = new ReservationsController(reservationRepository, roomRepository, unitRepository,
-                holidayRepository, telegramNotificationService, userRepository);
+                holidayRepository, telegramNotificationService, userRepository, creditService);
 
         Room room = new Room();
         room.setId(ROOM_ID);
@@ -268,10 +270,26 @@ class ReservationsControllerSecurityTest {
         }
 
         @Test
-        void tenantRescheduleOfApprovedReservationGoesBackToPending() {
+        void tenantCannotEditApprovedAvulsaReservation() {
             loginAs("tenant", "locatario");
             Reservation r = existing(TENANT_ID, "aprovada");
             r.setComments("aprovada||adminUser|unica");
+            r.setPaidWithCredits(false);
+            ReservationDTO patch = new ReservationDTO();
+            patch.setHoraInicio(LocalTime.of(14, 0));
+            patch.setHoraFim(LocalTime.of(15, 0));
+
+            ResponseEntity<?> resp = controller.updateReservation(500, patch);
+            assertEquals(HttpStatus.FORBIDDEN, resp.getStatusCode());
+            verify(reservationRepository, never()).save(any());
+        }
+
+        @Test
+        void tenantRescheduleOfHolidayReservationGoesBackToPending() {
+            loginAs("tenant", "locatario");
+            Reservation r = existing(TENANT_ID, "reagendar");
+            r.setComments("reagendar|Feriado|adminUser|unica");
+            r.setPaidWithCredits(false);
             ReservationDTO patch = new ReservationDTO();
             patch.setHoraInicio(LocalTime.of(14, 0));
             patch.setHoraFim(LocalTime.of(15, 0));
@@ -281,6 +299,50 @@ class ReservationsControllerSecurityTest {
             Reservation saved = captureSaved();
             assertEquals("pendente", statusOf(saved));
             assertEquals("", approverOf(saved));
+        }
+
+        @Test
+        void tenantCanCreateCancelAndEditCreditReservationWith24hAdvance() {
+            loginAs("tenant", "locatario");
+            ReservationDTO req = newRequest(null, TENANT_ID);
+            req.setDepositImage(null);
+            req.setPaidWithCredits(true);
+            req.setHoraInicio(LocalTime.of(9, 0));
+            req.setHoraFim(LocalTime.of(11, 0)); // 2 horas inteiras
+
+            ResponseEntity<?> createResp = controller.createReservation(req);
+            assertEquals(HttpStatus.OK, createResp.getStatusCode());
+            Reservation created = captureSaved();
+            assertEquals("aprovada", statusOf(created));
+            assertTrue(created.getPaidWithCredits());
+            assertEquals(2, created.getCreditHoursUsed());
+            verify(creditService).consumeCreditsForReservation(any(), eq(UNIT_ID), any(), eq(2), any());
+
+            // Cancelamento com >= 24h de antecedência devolve os créditos
+            Reservation creditRes = existing(TENANT_ID, "aprovada");
+            creditRes.setPaidWithCredits(true);
+            creditRes.setCreditHoursUsed(2);
+
+            ReservationDTO cancelPatch = new ReservationDTO();
+            cancelPatch.setStatusString("cancelada");
+            ResponseEntity<?> cancelResp = controller.updateReservation(500, cancelPatch);
+            assertEquals(HttpStatus.OK, cancelResp.getStatusCode());
+            verify(creditService).refundCreditsForReservation(eq(creditRes), any(), isNull());
+        }
+
+        @Test
+        void tenantCannotCancelOrEditCreditReservationWithin24h() {
+            loginAs("tenant", "locatario");
+            Reservation creditRes = existing(TENANT_ID, "aprovada");
+            creditRes.setPaidWithCredits(true);
+            creditRes.setCreditHoursUsed(1);
+            creditRes.setData(LocalDate.now());
+            creditRes.setHoraInicio(LocalTime.now().plusHours(2));
+            creditRes.setHoraFim(LocalTime.now().plusHours(3));
+
+            ReservationDTO cancelPatch = new ReservationDTO();
+            cancelPatch.setStatusString("cancelada");
+            assertEquals(HttpStatus.BAD_REQUEST, controller.updateReservation(500, cancelPatch).getStatusCode());
         }
 
         @Test

@@ -124,6 +124,9 @@ public class AuditAspect {
 
         // Refinar a action quando for criação ou alteração de reserva
         if ("SOLICITACAO_RESERVA".equals(action) &&
+            Boolean.TRUE.equals(resDto.getPaidWithCredits())) {
+          action = "RESERVA_COM_CREDITO";
+        } else if ("SOLICITACAO_RESERVA".equals(action) &&
             "reserva_especial_admin".equalsIgnoreCase(
                 resDto.getDepositImage())) {
           action = "RESERVA_ESPECIAL_CRIADA";
@@ -194,6 +197,25 @@ public class AuditAspect {
               .append(userEmail != null ? " (" + userEmail + ")" : "");
         }
         details = sb.toString();
+      } else if ("PACOTE_CREDITO".equals(auditable.targetType()) &&
+                 result instanceof ResponseEntity<?> re &&
+                 re.getBody() instanceof com.clinica.escuta.DTO.CreditPackageDTO pDto) {
+        targetName = "Pacote #" + pDto.getId() + " — " + (pDto.getUserName() != null ? pDto.getUserName() : "Locatário #" + pDto.getUserId());
+        StringBuilder sb = new StringBuilder();
+        sb.append("Pacote de Créditos: #").append(pDto.getId()).append(" (").append(pDto.getTotalCredits()).append("h)\n");
+        sb.append("Profissional: ").append(pDto.getUserName() != null ? pDto.getUserName() : "-").append("\n");
+        sb.append("Unidade: ").append(pDto.getUnitName() != null ? pDto.getUnitName() : "-").append("\n");
+        sb.append("Status resultante: ").append(pDto.getStatus()).append("\n");
+        if (pDto.getReviewedByName() != null) {
+          sb.append("Avaliado por: ").append(pDto.getReviewedByName()).append("\n");
+        }
+        if (pDto.getExpiresAt() != null) {
+          sb.append("Validade até: ").append(pDto.getExpiresAt().toLocalDate().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"))).append("\n");
+        }
+        if (pDto.getRejectionReason() != null && !pDto.getRejectionReason().isBlank()) {
+          sb.append("Motivo da rejeição: ").append(pDto.getRejectionReason());
+        }
+        details = sb.toString().trim();
       }
 
       AuditEvent auditEvent =

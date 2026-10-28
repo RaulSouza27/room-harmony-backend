@@ -117,6 +117,41 @@ public class TelegramNotificationService {
         }
     }
 
+    @Async
+    public void notifyNewCreditPackage(com.clinica.escuta.DTO.CreditPackageDTO pkgDto) {
+        if (!enabled || botToken == null || botToken.isBlank() || chatId == null || chatId.isBlank()) {
+            logger.info("Notificação do Telegram ignorada: token ou chat-id não configurado.");
+            return;
+        }
+
+        try {
+            StringBuilder message = new StringBuilder();
+            message.append("💳 <b>NOVA SOLICITAÇÃO DE PACOTE DE CRÉDITOS (12h)</b>\n\n");
+            message.append("👤 <b>Profissional:</b> ").append(escapeHtml(pkgDto.getUserName())).append("\n");
+            message.append("🏢 <b>Unidade:</b> ").append(escapeHtml(pkgDto.getUnitName())).append("\n");
+            message.append("⏱️ <b>Créditos:</b> ").append(pkgDto.getTotalCredits()).append(" horas\n");
+            message.append("⚡ <b>Status:</b> PENDENTE\n\n");
+            message.append("👉 <i>Acesse o painel do sistema para analisar o comprovante e aprovar ou rejeitar o pacote.</i>");
+
+            String url = apiUrl + botToken.trim() + "/sendMessage";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            Map<String, Object> body = new HashMap<>();
+            body.put("chat_id", chatId.trim());
+            body.put("text", message.toString());
+            body.put("parse_mode", "HTML");
+
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+            restTemplate.postForEntity(url, entity, String.class);
+
+            logger.info("Notificação de pacote de créditos enviada para o grupo do Telegram com sucesso.");
+        } catch (Exception e) {
+            logger.error("Falha ao enviar mensagem de pacote de créditos para o Telegram: {}", e.getMessage(), e);
+        }
+    }
+
     private String escapeHtml(String input) {
         if (input == null) return "";
         return input.replace("&", "&amp;")

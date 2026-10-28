@@ -47,4 +47,10 @@ public class Reservation {
 
     @Column(nullable = false)
     private Boolean status = true;
+
+    @Column(name = "paid_with_credits", nullable = false)
+    private Boolean paidWithCredits = false;
+
+    @Column(name = "credit_hours_used", nullable = false)
+    private Integer creditHoursUsed = 0;
 }

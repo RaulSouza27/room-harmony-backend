@@ -22,6 +22,8 @@ public class ReservationDTO {
     private String motivoNegacao;
     private String aprovadoPor;
     private String recorrencia;
+    private Boolean paidWithCredits;
+    private Integer creditHoursUsed;
 
     public ReservationDTO() {
     }
@@ -47,6 +49,8 @@ public class ReservationDTO {
         );
         this.description = reservation.getDescription();
         this.recorrencia = "unica";
+        this.paidWithCredits = Boolean.TRUE.equals(reservation.getPaidWithCredits());
+        this.creditHoursUsed = reservation.getCreditHoursUsed() != null ? reservation.getCreditHoursUsed() : 0;
 
         String comments = reservation.getComments();
         if (comments != null && comments.contains("|")) {
@@ -82,6 +86,8 @@ public class ReservationDTO {
         
         r.setComments(statusVal + "|" + motivoVal + "|" + aprovadoVal + "|" + recVal);
         r.setStatus(!"cancelada".equals(statusVal) && !"negada".equals(statusVal));
+        r.setPaidWithCredits(Boolean.TRUE.equals(dto.getPaidWithCredits()));
+        r.setCreditHoursUsed(dto.getCreditHoursUsed() != null ? dto.getCreditHoursUsed() : 0);
         
         return r;
     }

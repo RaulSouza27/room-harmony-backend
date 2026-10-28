@@ -3,17 +3,23 @@ package com.clinica.escuta.controller;
 import com.clinica.escuta.annotation.Auditable;
 import com.clinica.escuta.DTO.ReservationDTO;
 import com.clinica.escuta.model.Reservation;
+import com.clinica.escuta.model.Room;
 import com.clinica.escuta.model.User;
 import com.clinica.escuta.repository.ReservationRepository;
 import com.clinica.escuta.repository.UserRepository;
+import com.clinica.escuta.service.CreditService;
 import com.clinica.escuta.service.TelegramNotificationService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +36,7 @@ public class ReservationsController {
     private final com.clinica.escuta.repository.HolidayRepository holidayRepository;
     private final TelegramNotificationService telegramNotificationService;
     private final UserRepository userRepository;
+    private final CreditService creditService;
 
     public ReservationsController(
             ReservationRepository reservationRepository,
@@ -38,12 +45,25 @@ public class ReservationsController {
             com.clinica.escuta.repository.HolidayRepository holidayRepository,
             TelegramNotificationService telegramNotificationService,
             UserRepository userRepository) {
+        this(reservationRepository, roomRepository, unitRepository, holidayRepository, telegramNotificationService, userRepository, null);
+    }
+
+    @Autowired
+    public ReservationsController(
+            ReservationRepository reservationRepository,
+            com.clinica.escuta.repository.RoomRepository roomRepository,
+            com.clinica.escuta.repository.UnitRepository unitRepository,
+            com.clinica.escuta.repository.HolidayRepository holidayRepository,
+            TelegramNotificationService telegramNotificationService,
+            UserRepository userRepository,
+            CreditService creditService) {
         this.reservationRepository = reservationRepository;
         this.roomRepository = roomRepository;
         this.unitRepository = unitRepository;
         this.holidayRepository = holidayRepository;
         this.telegramNotificationService = telegramNotificationService;
         this.userRepository = userRepository;
+        this.creditService = creditService;
     }
 
     private static boolean isAdmin(Authentication auth) {
@@ -51,12 +71,37 @@ public class ReservationsController {
                 .anyMatch(a -> "admin".equals(a.getAuthority()));
     }
 
-    /** Resolve o id do usuário autenticado a partir do username guardado no JWT. */
-    private Integer getAuthenticatedUserId(Authentication auth) {
-        if (auth == null || auth.getName() == null) return null;
-        return userRepository.findByUsername(auth.getName()).map(User::getId).orElse(null);
+    private Optional<User> getAuthenticatedUser(Authentication auth) {
+        if (auth == null || auth.getName() == null) return Optional.empty();
+        return userRepository.findByUsername(auth.getName());
     }
 
+    /** Resolve o id do usuário autenticado a partir do username guardado no JWT. */
+    private Integer getAuthenticatedUserId(Authentication auth) {
+        return getAuthenticatedUser(auth).map(User::getId).orElse(null);
+    }
+
+    /** Adquire lock pessimista na sala (com fallback para findById em testes unitários). */
+    private Optional<Room> lockRoomAndGet(Integer roomId) {
+        if (roomId == null) return Optional.empty();
+        Optional<Room> locked = roomRepository.findByIdForUpdate(roomId);
+        if (locked.isPresent()) {
+            return locked;
+        }
+        return roomRepository.findById(roomId);
+    }
+
+    private static boolean isWholeHours(LocalTime start, LocalTime end) {
+        if (start == null || end == null || !end.isAfter(start)) return false;
+        return start.getMinute() == 0 && start.getSecond() == 0
+                && end.getMinute() == 0 && end.getSecond() == 0;
+    }
+
+    private static int calculateWholeHours(LocalTime start, LocalTime end) {
+        return (int) Duration.between(start, end).toHours();
+    }
+
+    @Transactional
     @Auditable(action = "SOLICITACAO_RESERVA", targetType = "RESERVA")
     @PostMapping
     public ResponseEntity<?> createReservation(@RequestBody ReservationDTO request) {
@@ -65,24 +110,33 @@ public class ReservationsController {
             return ResponseEntity.badRequest().body("Missing required reservation fields.");
         }
 
+        if (!isWholeHours(request.getHoraInicio(), request.getHoraFim())) {
+            return ResponseEntity.badRequest().body("Só é possível reservar em horas inteiras.");
+        }
+
         // Check if creator is admin from SecurityContext
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         boolean isCreatorAdmin = isAdmin(auth);
+        Optional<User> actorOpt = getAuthenticatedUser(auth);
 
         // Non-admins can only create reservations for themselves
         Integer authenticatedUserId = null;
         if (!isCreatorAdmin) {
-            authenticatedUserId = getAuthenticatedUserId(auth);
+            authenticatedUserId = actorOpt.map(User::getId).orElse(null);
             if (authenticatedUserId == null) {
                 return ResponseEntity.status(403).body("Usuário autenticado não encontrado.");
             }
         }
         Integer ownerUserId = isCreatorAdmin ? request.getUserId() : authenticatedUserId;
+        boolean useCredits = Boolean.TRUE.equals(request.getPaidWithCredits());
 
-        // If the creator is not admin, require depositImage (receipt)
-        if (!isCreatorAdmin && (request.getDepositImage() == null || request.getDepositImage().trim().isEmpty() || "empty".equalsIgnoreCase(request.getDepositImage().trim()))) {
+        // If the creator is not admin and NOT using credits, require depositImage (receipt)
+        if (!isCreatorAdmin && !useCredits && (request.getDepositImage() == null || request.getDepositImage().trim().isEmpty() || "empty".equalsIgnoreCase(request.getDepositImage().trim()))) {
             return ResponseEntity.badRequest().body("O comprovante de pagamento é obrigatório.");
         }
+
+        // Lock room row to serialize concurrent reservations on the same room
+        Optional<Room> roomOpt = lockRoomAndGet(request.getRoomsId());
 
         // Validate clinic hours
         if (!isValidWorkingHours(request.getRoomsId(), request.getData(), request.getHoraInicio(), request.getHoraFim())) {
@@ -91,9 +145,10 @@ public class ReservationsController {
 
         // Determine recurrence string (default to "unica")
         String recorrencia = request.getRecorrencia() != null ? request.getRecorrencia() : "unica";
+        int hoursPerOccurrence = calculateWholeHours(request.getHoraInicio(), request.getHoraFim());
 
-        // Validate duration (bypassed for Admins so they can create generic special reservations with any duration)
-        if (!isCreatorAdmin) {
+        // Validate duration (bypassed for Admins or Credit Reservations which allow any whole number of hours >= 1)
+        if (!isCreatorAdmin && !useCredits) {
             if ("semanal_anual".equals(recorrencia) || "turno".equals(recorrencia)) {
                 if (!request.getHoraInicio().plusHours(4).equals(request.getHoraFim())) {
                     return ResponseEntity.badRequest().body("Turnos devem ter a duração exata de 4 horas.");
@@ -104,6 +159,10 @@ public class ReservationsController {
                     return ResponseEntity.badRequest().body("Reservas avulsas devem ter a duração exata de 1 hora.");
                 }
             }
+        }
+
+        if (useCredits && !"unica".equals(recorrencia)) {
+            return ResponseEntity.badRequest().body("Reservas com crédito devem ser feitas na modalidade avulsa (única).");
         }
 
         LocalDate startDate = request.getData();
@@ -131,45 +190,82 @@ public class ReservationsController {
             current = current.plusWeeks(1);
         }
 
+        Integer roomUnitId = roomOpt.map(Room::getUnitId).orElse(null);
+        String roomName = roomOpt.map(Room::getName).orElse("Sala #" + request.getRoomsId());
+
+        if (useCredits && creditService == null) {
+            return ResponseEntity.badRequest().body("Serviço de créditos indisponível.");
+        }
+
         // Persist all reservations
         List<Reservation> savedList = new ArrayList<>();
-        current = startDate;
-        while (!current.isAfter(endDate)) {
-            if (current.getDayOfWeek() != java.time.DayOfWeek.SUNDAY) {
-                Reservation reservation = new Reservation();
-                reservation.setRoomsId(request.getRoomsId());
-                reservation.setUserId(ownerUserId);
-                reservation.setData(current);
-                reservation.setHoraInicio(request.getHoraInicio());
-                reservation.setHoraFim(request.getHoraFim());
-                reservation.setDepositImage(request.getDepositImage() != null && !request.getDepositImage().isEmpty() ? request.getDepositImage() : "empty");
-                reservation.setDescription(request.getDescription());
-                
-                // SECURITY: status/approval are decided by the server, never trusted from the client.
-                String statusVal;
-                String motivoVal;
-                String aprovadoVal;
-                if (isCreatorAdmin) {
-                    statusVal = "aprovada";
-                    motivoVal = request.getMotivoNegacao() != null ? request.getMotivoNegacao() : "";
-                    aprovadoVal = request.getAprovadoPor() != null && !request.getAprovadoPor().isEmpty()
-                            ? request.getAprovadoPor()
-                            : (auth != null ? auth.getName() : "admin");
-                } else {
-                    statusVal = "pendente";
-                    motivoVal = "";
-                    aprovadoVal = "";
+        try {
+            current = startDate;
+            while (!current.isAfter(endDate)) {
+                if (current.getDayOfWeek() != java.time.DayOfWeek.SUNDAY) {
+                    Reservation reservation = new Reservation();
+                    reservation.setRoomsId(request.getRoomsId());
+                    reservation.setUserId(ownerUserId);
+                    reservation.setData(current);
+                    reservation.setHoraInicio(request.getHoraInicio());
+                    reservation.setHoraFim(request.getHoraFim());
+                    if (useCredits) {
+                        reservation.setDepositImage("credito_pacote");
+                        reservation.setPaidWithCredits(true);
+                        reservation.setCreditHoursUsed(hoursPerOccurrence);
+                    } else {
+                        reservation.setDepositImage(request.getDepositImage() != null && !request.getDepositImage().isEmpty() ? request.getDepositImage() : "empty");
+                        reservation.setPaidWithCredits(false);
+                        reservation.setCreditHoursUsed(0);
+                    }
+                    reservation.setDescription(request.getDescription());
+                    
+                    // SECURITY: status/approval are decided by the server, never trusted from the client.
+                    String statusVal;
+                    String motivoVal;
+                    String aprovadoVal;
+                    if (useCredits) {
+                        statusVal = "aprovada";
+                        motivoVal = "";
+                        aprovadoVal = "credito_automatico";
+                    } else if (isCreatorAdmin) {
+                        statusVal = "aprovada";
+                        motivoVal = request.getMotivoNegacao() != null ? request.getMotivoNegacao() : "";
+                        aprovadoVal = request.getAprovadoPor() != null && !request.getAprovadoPor().isEmpty()
+                                ? request.getAprovadoPor()
+                                : (auth != null ? auth.getName() : "admin");
+                    } else {
+                        statusVal = "pendente";
+                        motivoVal = "";
+                        aprovadoVal = "";
+                    }
+                    
+                    reservation.setComments(statusVal + "|" + motivoVal + "|" + aprovadoVal + "|" + recorrencia);
+                    reservation.setStatus(!"cancelada".equals(statusVal) && !"negada".equals(statusVal));
+                    
+                    Reservation saved = reservationRepository.save(reservation);
+                    savedList.add(saved);
+
+                    if (useCredits) {
+                        creditService.consumeCreditsForReservation(
+                                saved,
+                                roomUnitId,
+                                roomName,
+                                hoursPerOccurrence,
+                                actorOpt.orElse(null)
+                        );
+                    }
                 }
-                
-                reservation.setComments(statusVal + "|" + motivoVal + "|" + aprovadoVal + "|" + recorrencia);
-                reservation.setStatus(!"cancelada".equals(statusVal) && !"negada".equals(statusVal));
-                
-                savedList.add(reservationRepository.save(reservation));
+                if (endDate.equals(startDate)) {
+                    break;
+                }
+                current = current.plusWeeks(1);
             }
-            if (endDate.equals(startDate)) {
-                break;
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            if (!savedList.isEmpty()) {
+                reservationRepository.deleteAll(savedList);
             }
-            current = current.plusWeeks(1);
+            return ResponseEntity.badRequest().body(e.getMessage());
         }
 
         // Return the first saved reservation
@@ -177,10 +273,7 @@ public class ReservationsController {
             return ResponseEntity.badRequest().body("Nenhuma reserva pôde ser gerada.");
         }
 
-        Integer createdUnitId = roomRepository.findById(savedList.get(0).getRoomsId())
-                .map(com.clinica.escuta.model.Room::getUnitId)
-                .orElse(null);
-        ReservationDTO resultDTO = new ReservationDTO(savedList.get(0), true, createdUnitId);
+        ReservationDTO resultDTO = new ReservationDTO(savedList.get(0), true, roomUnitId);
         boolean isSpecial = "reserva_especial_admin".equalsIgnoreCase(request.getDepositImage());
         telegramNotificationService.notifyNewReservation(resultDTO, isSpecial);
 
@@ -268,6 +361,7 @@ public class ReservationsController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    @Transactional
     @Auditable(action = "ALTERACAO_RESERVA", targetType = "RESERVA")
     @PutMapping("/{id}")
     public ResponseEntity<?> updateReservation(@PathVariable Integer id, @RequestBody ReservationDTO request) {
@@ -277,42 +371,61 @@ public class ReservationsController {
         }
 
         Reservation r = reservationOpt.get();
+        boolean isCreditReservation = Boolean.TRUE.equals(r.getPaidWithCredits());
+        String currentStatus = getStatusFromComments(r.getComments());
 
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         boolean isUpdaterAdmin = isAdmin(auth);
+        Optional<User> actorOpt = getAuthenticatedUser(auth);
+
+        boolean isDateTimeOrRoomChanged = (request.getData() != null && !request.getData().equals(r.getData()))
+                || (request.getHoraInicio() != null && !request.getHoraInicio().equals(r.getHoraInicio()))
+                || (request.getHoraFim() != null && !request.getHoraFim().equals(r.getHoraFim()))
+                || (request.getRoomsId() != null && !request.getRoomsId().equals(r.getRoomsId()));
 
         if (!isUpdaterAdmin) {
             // Non-admins may only touch their own reservations
-            Integer authenticatedUserId = getAuthenticatedUserId(auth);
+            Integer authenticatedUserId = actorOpt.map(User::getId).orElse(null);
             if (authenticatedUserId == null || !authenticatedUserId.equals(r.getUserId())) {
                 return ResponseEntity.status(403).body("Você não tem permissão para alterar esta reserva.");
             }
-            // Non-admins may only request cancellation or cancel (pending) reservations
+            // Non-admins may only request cancellation or cancel reservations
             String requestedStatus = request.getStatusString();
             if (requestedStatus != null
                     && !"solicitacao_cancelamento".equals(requestedStatus)
                     && !"cancelada".equals(requestedStatus)) {
                 return ResponseEntity.status(403).body("Locatários não podem alterar o status da reserva para '" + requestedStatus + "'.");
             }
-        }
 
-        // Validação da regra de 24h de antecedência para solicitação de cancelamento por locatário
-        if ("solicitacao_cancelamento".equals(request.getStatusString()) && !isUpdaterAdmin) {
-            java.time.LocalDateTime reservationStart = r.getData().atTime(r.getHoraInicio());
-            java.time.LocalDateTime now = java.time.LocalDateTime.now();
-            if (now.plusHours(24).isAfter(reservationStart)) {
-                return ResponseEntity.badRequest().body("Solicitações de cancelamento só podem ser feitas com no mínimo 24 horas de antecedência.");
+            // Regras específicas de Reserva com Crédito vs. Reserva Avulsa para Locatário
+            if (isCreditReservation) {
+                // Trava de 24h: Com menos de 24h de antecedência, o locatário não pode cancelar nem editar
+                LocalDateTime reservationStart = r.getData().atTime(r.getHoraInicio());
+                LocalDateTime now = LocalDateTime.now();
+                if (now.plusHours(24).isAfter(reservationStart)) {
+                    return ResponseEntity.badRequest().body("Reservas com menos de 24 horas de antecedência ficam travadas e não podem ser canceladas ou editadas pelo locatário.");
+                }
+            } else {
+                // Reserva avulsa:
+                // 1) Se já estiver aprovada, locatário NÃO pode cancelar diretamente nem editar (apenas solicitar cancelamento com >= 24h)
+                if ("aprovada".equals(currentStatus)) {
+                    if ("cancelada".equals(requestedStatus)) {
+                        return ResponseEntity.badRequest().body("Locatários não podem cancelar reservas avulsas aprovadas diretamente. Solicite o cancelamento ao administrador.");
+                    }
+                    if (!"solicitacao_cancelamento".equals(requestedStatus)) {
+                        return ResponseEntity.status(403).body("Reservas avulsas aprovadas só podem ser alteradas pelo administrador.");
+                    }
+                }
+                // 2) Solicitação de cancelamento exige >= 24h
+                if ("solicitacao_cancelamento".equals(requestedStatus)) {
+                    LocalDateTime reservationStart = r.getData().atTime(r.getHoraInicio());
+                    LocalDateTime now = LocalDateTime.now();
+                    if (now.plusHours(24).isAfter(reservationStart)) {
+                        return ResponseEntity.badRequest().body("Solicitações de cancelamento só podem ser feitas com no mínimo 24 horas de antecedência.");
+                    }
+                }
             }
         }
-
-        if ("cancelada".equals(request.getStatusString()) && !isUpdaterAdmin && "aprovada".equals(getStatusFromComments(r.getComments()))) {
-            return ResponseEntity.badRequest().body("Locatários não podem cancelar reservas aprovadas diretamente. Solicite o cancelamento ao administrador.");
-        }
-        
-        boolean isDateTimeOrRoomChanged = (request.getData() != null && !request.getData().equals(r.getData()))
-                || (request.getHoraInicio() != null && !request.getHoraInicio().equals(r.getHoraInicio()))
-                || (request.getHoraFim() != null && !request.getHoraFim().equals(r.getHoraFim()))
-                || (request.getRoomsId() != null && !request.getRoomsId().equals(r.getRoomsId()));
 
         LocalDate targetDate = request.getData() != null ? request.getData() : r.getData();
         LocalTime targetStart = request.getHoraInicio() != null ? request.getHoraInicio() : r.getHoraInicio();
@@ -324,15 +437,20 @@ public class ReservationsController {
         }
 
         Integer targetRoomId = request.getRoomsId() != null ? request.getRoomsId() : r.getRoomsId();
+        Optional<Room> targetRoomOpt = lockRoomAndGet(targetRoomId);
 
         if (isDateTimeOrRoomChanged) {
+            if (!isWholeHours(targetStart, targetEnd)) {
+                return ResponseEntity.badRequest().body("Só é possível reservar em horas inteiras.");
+            }
+
             // Validate clinic hours
             if (!isValidWorkingHours(targetRoomId, targetDate, targetStart, targetEnd)) {
                 return ResponseEntity.badRequest().body("A reserva está fora do horário de funcionamento da unidade.");
             }
 
-            // Validate duration
-            if (!isUpdaterAdmin) {
+            // Validate duration for non-admin on non-credit reservations
+            if (!isUpdaterAdmin && !isCreditReservation) {
                 if ("semanal_anual".equals(recorrencia) || "turno".equals(recorrencia)) {
                     if (!targetStart.plusHours(4).equals(targetEnd)) {
                         return ResponseEntity.badRequest().body("Turnos devem ter a duração exata de 4 horas.");
@@ -350,15 +468,7 @@ public class ReservationsController {
             }
         }
 
-        if (request.getRoomsId() != null) r.setRoomsId(request.getRoomsId());
-        if (isUpdaterAdmin && request.getUserId() != null) r.setUserId(request.getUserId());
-        if (request.getData() != null) r.setData(request.getData());
-        if (request.getHoraInicio() != null) r.setHoraInicio(request.getHoraInicio());
-        if (request.getHoraFim() != null) r.setHoraFim(request.getHoraFim());
-        if (request.getDepositImage() != null) r.setDepositImage(request.getDepositImage());
-        if (request.getDescription() != null) r.setDescription(request.getDescription());
-        
-        String statusVal = request.getStatusString() != null ? request.getStatusString() : getStatusFromComments(r.getComments());
+        String statusVal = request.getStatusString() != null ? request.getStatusString() : currentStatus;
         String motivoVal;
         String aprovadoVal;
         if (isUpdaterAdmin) {
@@ -368,32 +478,84 @@ public class ReservationsController {
             // Non-admins cannot forge approval data
             motivoVal = getMotivoFromComments(r.getComments());
             aprovadoVal = getAprovadoFromComments(r.getComments());
-            // Any date/time/room change by a tenant requires new admin approval
             if (isDateTimeOrRoomChanged && request.getStatusString() == null) {
-                statusVal = "pendente";
-                aprovadoVal = "";
+                if (isCreditReservation) {
+                    // Reserva com crédito editada pelo locatário continua aprovada sem aprovação do admin
+                    statusVal = "aprovada";
+                    aprovadoVal = "credito_automatico";
+                } else {
+                    // Reserva avulsa reagendada pelo locatário requer nova aprovação do admin
+                    statusVal = "pendente";
+                    aprovadoVal = "";
+                }
             }
         }
+
+        // Tratamento contábil de créditos na edição ou no cancelamento
+        if (isCreditReservation && creditService != null) {
+            boolean isBeingCancelled = "cancelada".equalsIgnoreCase(statusVal) && !"cancelada".equalsIgnoreCase(currentStatus);
+            if (isBeingCancelled) {
+                creditService.refundCreditsForReservation(r, actorOpt.orElse(null), null);
+            } else if (isDateTimeOrRoomChanged && !"cancelada".equalsIgnoreCase(statusVal)) {
+                int newHours = calculateWholeHours(targetStart, targetEnd);
+                Integer targetUnitId = targetRoomOpt.map(Room::getUnitId).orElse(null);
+                String targetRoomName = targetRoomOpt.map(Room::getName).orElse("Sala #" + targetRoomId);
+                try {
+                    creditService.validateAndAdjustReservationEdit(
+                            r,
+                            targetUnitId,
+                            targetRoomName,
+                            targetDate,
+                            targetStart,
+                            targetEnd,
+                            newHours,
+                            actorOpt.orElse(null)
+                    );
+                    r.setCreditHoursUsed(newHours);
+                } catch (IllegalArgumentException | IllegalStateException e) {
+                    return ResponseEntity.badRequest().body(e.getMessage());
+                }
+            }
+        }
+
+        if (request.getRoomsId() != null) r.setRoomsId(request.getRoomsId());
+        if (isUpdaterAdmin && request.getUserId() != null) r.setUserId(request.getUserId());
+        if (request.getData() != null) r.setData(request.getData());
+        if (request.getHoraInicio() != null) r.setHoraInicio(request.getHoraInicio());
+        if (request.getHoraFim() != null) r.setHoraFim(request.getHoraFim());
+        if (!isCreditReservation && request.getDepositImage() != null) r.setDepositImage(request.getDepositImage());
+        if (request.getDescription() != null) r.setDescription(request.getDescription());
         
         r.setComments(statusVal + "|" + motivoVal + "|" + aprovadoVal + "|" + recorrencia);
         r.setStatus(!"cancelada".equals(statusVal) && !"negada".equals(statusVal));
 
         Reservation saved = reservationRepository.save(r);
-        Integer savedUnitId = roomRepository.findById(saved.getRoomsId()).map(com.clinica.escuta.model.Room::getUnitId).orElse(null);
+        Integer savedUnitId = targetRoomOpt.map(Room::getUnitId).orElse(null);
         return ResponseEntity.ok(new ReservationDTO(saved, true, savedUnitId));
     }
 
+    @Transactional
     @Auditable(action = "EXCLUSAO_RESERVA", targetType = "RESERVA")
     @PreAuthorize("hasAuthority('admin')")
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteReservation(@PathVariable Integer id) {
-        if (!reservationRepository.existsById(id)) {
+        Optional<Reservation> resOpt = reservationRepository.findById(id);
+        if (resOpt.isEmpty() && !reservationRepository.existsById(id)) {
             return ResponseEntity.notFound().build();
+        }
+        if (resOpt.isPresent()) {
+            Reservation r = resOpt.get();
+            String currentStatus = getStatusFromComments(r.getComments());
+            if (Boolean.TRUE.equals(r.getPaidWithCredits()) && !"cancelada".equalsIgnoreCase(currentStatus) && creditService != null) {
+                Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                creditService.refundCreditsForReservation(r, getAuthenticatedUser(auth).orElse(null), "Estorno por exclusão administrativa da reserva #" + r.getId());
+            }
         }
         reservationRepository.deleteById(id);
         return ResponseEntity.ok("Reservation deleted successfully.");
     }
 
+    @Transactional
     @Auditable(action = "EXCLUSAO_LOTE_RESERVA", targetType = "RESERVA")
     @PreAuthorize("hasAuthority('admin')")
     @PostMapping("/delete-batch")
@@ -401,14 +563,25 @@ public class ReservationsController {
         if (ids == null || ids.isEmpty()) {
             return ResponseEntity.badRequest().body("No IDs provided.");
         }
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        User actor = getAuthenticatedUser(auth).orElse(null);
         for (Integer id : ids) {
-            if (reservationRepository.existsById(id)) {
+            Optional<Reservation> resOpt = reservationRepository.findById(id);
+            if (resOpt.isPresent()) {
+                Reservation r = resOpt.get();
+                String currentStatus = getStatusFromComments(r.getComments());
+                if (Boolean.TRUE.equals(r.getPaidWithCredits()) && !"cancelada".equalsIgnoreCase(currentStatus) && creditService != null) {
+                    creditService.refundCreditsForReservation(r, actor, "Estorno por exclusão em lote da reserva #" + r.getId());
+                }
+                reservationRepository.deleteById(id);
+            } else if (reservationRepository.existsById(id)) {
                 reservationRepository.deleteById(id);
             }
         }
         return ResponseEntity.ok("Reservations deleted successfully.");
     }
 
+    @Transactional
     @Auditable(action = "CANCELAMENTO_LOTE_RESERVA", targetType = "RESERVA")
     @PreAuthorize("hasAuthority('admin')")
     @PostMapping("/cancel-batch")
@@ -416,11 +589,16 @@ public class ReservationsController {
         if (ids == null || ids.isEmpty()) {
             return ResponseEntity.badRequest().body("No IDs provided.");
         }
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        User actor = getAuthenticatedUser(auth).orElse(null);
         List<Reservation> reservations = reservationRepository.findAllById(ids);
         List<Reservation> toUpdate = new ArrayList<>();
         for (Reservation r : reservations) {
             String currentStatus = getStatusFromComments(r.getComments());
             if (!"cancelada".equalsIgnoreCase(currentStatus)) {
+                if (Boolean.TRUE.equals(r.getPaidWithCredits()) && creditService != null) {
+                    creditService.refundCreditsForReservation(r, actor, null);
+                }
                 String motivoVal = getMotivoFromComments(r.getComments());
                 String aprovadoVal = getAprovadoFromComments(r.getComments());
                 String recorrencia = getRecorrenciaFromComments(r.getComments());
