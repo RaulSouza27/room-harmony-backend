@@ -18,8 +18,8 @@ WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 
 # Define variáveis de ambiente padrão para o Spring Boot (podem ser sobrescritas no Dokploy)
-ENV SERVER_PORT=3313
-EXPOSE 3313
+ENV SERVER_PORT=3312
+EXPOSE 3312
 
 # Comando para iniciar a aplicação
 ENTRYPOINT ["java", "-jar", "app.jar"]
