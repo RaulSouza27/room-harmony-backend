@@ -1,6 +1,7 @@
 package com.clinica.escuta.controller;
 
 import com.clinica.escuta.annotation.Auditable;
+import com.clinica.escuta.DTO.ExpiringReservationAlertDTO;
 import com.clinica.escuta.DTO.ReservationDTO;
 import com.clinica.escuta.model.Reservation;
 import com.clinica.escuta.model.User;
@@ -243,6 +244,228 @@ public class ReservationsController {
             list.add(dto);
         }
         return ResponseEntity.ok(list);
+    }
+
+    @GetMapping("/expiring-alerts")
+    public ResponseEntity<List<ExpiringReservationAlertDTO>> getExpiringAlerts(
+            @RequestParam(required = false) Integer userId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate referenceDate
+    ) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        boolean isCallerAdmin = isAdmin(auth);
+
+        Integer effectiveUserId = userId;
+        if (!isCallerAdmin) {
+            Integer authUserId = getAuthenticatedUserId(auth);
+            if (authUserId == null) {
+                return ResponseEntity.status(403).build();
+            }
+            effectiveUserId = authUserId;
+        }
+
+        LocalDate today = referenceDate != null ? referenceDate : LocalDate.now();
+
+        List<Reservation> sourceReservations = effectiveUserId != null
+                ? reservationRepository.findByUserId(effectiveUserId)
+                : reservationRepository.findByStatusTrue();
+
+        // Preload rooms, units, and users in single queries to avoid N+1
+        java.util.Map<Integer, com.clinica.escuta.model.Room> roomMap = new java.util.HashMap<>();
+        for (com.clinica.escuta.model.Room room : roomRepository.findAll()) {
+            roomMap.put(room.getId(), room);
+        }
+
+        java.util.Map<Integer, com.clinica.escuta.model.Unit> unitMap = new java.util.HashMap<>();
+        for (com.clinica.escuta.model.Unit unit : unitRepository.findAll()) {
+            unitMap.put(unit.getId(), unit);
+        }
+
+        java.util.Map<Integer, User> userMap = new java.util.HashMap<>();
+        if (effectiveUserId != null) {
+            userRepository.findById(effectiveUserId).ifPresent(u -> userMap.put(u.getId(), u));
+        } else {
+            for (User u : userRepository.findAll()) {
+                userMap.put(u.getId(), u);
+            }
+        }
+
+        // Track all active slot dates (userId_roomId_date_start_end) and group recurring series
+        java.util.Set<String> activeSlotDates = new java.util.HashSet<>();
+        java.util.Map<String, List<Reservation>> seriesGroups = new java.util.LinkedHashMap<>();
+
+        for (Reservation r : sourceReservations) {
+            if (!Boolean.TRUE.equals(r.getStatus())) {
+                continue;
+            }
+            String statusStr = getStatusFromComments(r.getComments());
+            if ("cancelada".equalsIgnoreCase(statusStr) || "negada".equalsIgnoreCase(statusStr)) {
+                continue;
+            }
+            if (isSpecialAdminReservation(r)) {
+                continue;
+            }
+            if (r.getData() == null || r.getHoraInicio() == null || r.getHoraFim() == null || r.getRoomsId() == null || r.getUserId() == null) {
+                continue;
+            }
+
+            String startStr = formatTimeHHmm(r.getHoraInicio());
+            String endStr = formatTimeHHmm(r.getHoraFim());
+            activeSlotDates.add(r.getUserId() + "_" + r.getRoomsId() + "_" + r.getData() + "_" + startStr + "_" + endStr);
+
+            String normalizedRec = normalizeRecorrencia(getRecorrenciaFromComments(r.getComments()));
+            if (!"semanal_mensal".equals(normalizedRec) && !"semanal_anual".equals(normalizedRec)) {
+                continue;
+            }
+
+            int dayOfWeek = r.getData().getDayOfWeek().getValue();
+            String seriesKey = r.getUserId() + "_" + r.getRoomsId() + "_" + dayOfWeek + "_" + startStr + "_" + endStr + "_" + normalizedRec;
+            seriesGroups.computeIfAbsent(seriesKey, k -> new ArrayList<>()).add(r);
+        }
+
+        java.time.format.DateTimeFormatter brDateFormatter = java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        List<ExpiringReservationAlertDTO> alerts = new ArrayList<>();
+
+        for (java.util.Map.Entry<String, List<Reservation>> entry : seriesGroups.entrySet()) {
+            String seriesKey = entry.getKey();
+            List<Reservation> occurrences = entry.getValue();
+            if (occurrences.isEmpty()) {
+                continue;
+            }
+
+            occurrences.sort(java.util.Comparator.comparing(Reservation::getData));
+            Reservation lastRes = occurrences.get(occurrences.size() - 1);
+            LocalDate lastDate = lastRes.getData();
+            LocalDate nextStartDate = lastDate.plusWeeks(1);
+
+            String startStr = formatTimeHHmm(lastRes.getHoraInicio());
+            String endStr = formatTimeHHmm(lastRes.getHoraFim());
+
+            // Check if the user already has an active reservation on nextStartDate in the same room and time
+            String nextSlotKey = lastRes.getUserId() + "_" + lastRes.getRoomsId() + "_" + nextStartDate + "_" + startStr + "_" + endStr;
+            if (activeSlotDates.contains(nextSlotKey)) {
+                continue;
+            }
+
+            String normalizedRec = normalizeRecorrencia(getRecorrenciaFromComments(lastRes.getComments()));
+            long daysUntil = java.time.temporal.ChronoUnit.DAYS.between(today, lastDate);
+
+            // Expiration alert window:
+            // - Hora Fixa (semanal_mensal): from 7 days before lastDate up to 5 days after lastDate
+            // - Turno (semanal_anual): from 30 days before lastDate up to 7 days after lastDate
+            boolean inWindow;
+            if ("semanal_mensal".equals(normalizedRec)) {
+                inWindow = daysUntil >= -5 && daysUntil <= 7;
+            } else {
+                inWindow = daysUntil >= -7 && daysUntil <= 30;
+            }
+
+            if (!inWindow) {
+                continue;
+            }
+
+            com.clinica.escuta.model.Room room = roomMap.get(lastRes.getRoomsId());
+            if (room != null && !Boolean.TRUE.equals(room.getStatus())) {
+                continue;
+            }
+            Integer unitId = room != null ? room.getUnitId() : null;
+            com.clinica.escuta.model.Unit unit = unitId != null ? unitMap.get(unitId) : null;
+            if (unit != null && !Boolean.TRUE.equals(unit.getStatus())) {
+                continue;
+            }
+            User owner = userMap.get(lastRes.getUserId());
+            if (owner != null && !Boolean.TRUE.equals(owner.getStatus())) {
+                continue;
+            }
+
+            String roomName = room != null ? room.getName() : "Sala #" + lastRes.getRoomsId();
+            String unitName = unit != null ? unit.getName() : (unitId != null ? "Unidade #" + unitId : "Unidade");
+            String userName = owner != null ? owner.getUsername() : "Profissional #" + lastRes.getUserId();
+            String userEmail = owner != null ? owner.getEmail() : "";
+            String userPhone = owner != null && owner.getPhone() != null ? owner.getPhone() : "";
+
+            String recorrenciaLabel = "semanal_anual".equals(normalizedRec) ? "Turno (4h)" : "Hora avulsa fixa";
+            String dayOfWeekLabel = getDayOfWeekLabelPt(lastDate.getDayOfWeek());
+            String lastDateFormatted = lastDate.format(brDateFormatter);
+            String nextStartDateFormatted = nextStartDate.format(brDateFormatter);
+            String nextCycleLabel = "semanal_anual".equals(normalizedRec)
+                    ? String.valueOf(nextStartDate.getYear())
+                    : getMonthNamePt(nextStartDate.getMonthValue()) + "/" + nextStartDate.getYear();
+
+            String urgencyLevel = daysUntil <= 2 ? "critical" : "warning";
+
+            String timingPhrase;
+            if (daysUntil < 0) {
+                timingPhrase = "encerrou em " + lastDateFormatted;
+            } else if (daysUntil == 0) {
+                timingPhrase = "encerra hoje (" + lastDateFormatted + ")";
+            } else if (daysUntil == 1) {
+                timingPhrase = "encerra amanhã (" + lastDateFormatted + ")";
+            } else {
+                timingPhrase = "encerra em " + lastDateFormatted + " (faltam " + daysUntil + " dias)";
+            }
+
+            String alertTitle = daysUntil <= 0
+                    ? "Renovação urgente — " + recorrenciaLabel
+                    : "Reserva próxima de expirar — " + recorrenciaLabel;
+
+            String alertMessage = String.format(
+                    "Sua reserva de %s na %s (%s) — %s, das %s às %s — %s. Renove a partir de %s (%s) para manter o horário reservado.",
+                    recorrenciaLabel,
+                    roomName,
+                    unitName,
+                    dayOfWeekLabel,
+                    startStr,
+                    endStr,
+                    timingPhrase,
+                    nextStartDateFormatted,
+                    nextCycleLabel
+            );
+
+            String whatsappMessage = String.format(
+                    "Olá %s! Tudo bem? Passando para lembrar que sua reserva de %s na Clínica Escuta (%s · %s, %s das %s às %s) %s. Acesse o sistema para solicitar a renovação de %s (a partir de %s) e garantir o seu horário!",
+                    userName,
+                    recorrenciaLabel,
+                    roomName,
+                    unitName,
+                    dayOfWeekLabel,
+                    startStr,
+                    endStr,
+                    timingPhrase,
+                    nextCycleLabel,
+                    nextStartDateFormatted
+            );
+
+            alerts.add(ExpiringReservationAlertDTO.builder()
+                    .seriesKey(seriesKey)
+                    .lastReservationId(lastRes.getId())
+                    .userId(lastRes.getUserId())
+                    .userName(userName)
+                    .userEmail(userEmail)
+                    .userPhone(userPhone)
+                    .roomId(lastRes.getRoomsId())
+                    .roomName(roomName)
+                    .unitId(unitId)
+                    .unitName(unitName)
+                    .recorrencia(normalizedRec)
+                    .recorrenciaLabel(recorrenciaLabel)
+                    .dayOfWeekLabel(dayOfWeekLabel)
+                    .horaInicio(startStr)
+                    .horaFim(endStr)
+                    .lastDate(lastDate)
+                    .lastDateFormatted(lastDateFormatted)
+                    .daysUntilExpiration(daysUntil)
+                    .urgencyLevel(urgencyLevel)
+                    .alertTitle(alertTitle)
+                    .alertMessage(alertMessage)
+                    .whatsappMessage(whatsappMessage)
+                    .nextStartDate(nextStartDate)
+                    .nextStartDateFormatted(nextStartDateFormatted)
+                    .nextCycleLabel(nextCycleLabel)
+                    .build());
+        }
+
+        alerts.sort(java.util.Comparator.comparingLong(ExpiringReservationAlertDTO::getDaysUntilExpiration));
+        return ResponseEntity.ok(alerts);
     }
 
     @GetMapping("/{id}/receipt")
@@ -557,5 +780,58 @@ public class ReservationsController {
             }
         }
         return "unica";
+    }
+
+    private boolean isSpecialAdminReservation(Reservation r) {
+        if ("reserva_especial_admin".equalsIgnoreCase(r.getDepositImage())) {
+            return true;
+        }
+        return r.getDescription() != null && r.getDescription().contains("[Reserva Especial Admin]");
+    }
+
+    private String formatTimeHHmm(LocalTime time) {
+        if (time == null) return "";
+        String str = time.toString();
+        return str.length() >= 5 ? str.substring(0, 5) : str;
+    }
+
+    private String normalizeRecorrencia(String rec) {
+        if ("semanal_mensal".equalsIgnoreCase(rec) || "semanal".equalsIgnoreCase(rec)) {
+            return "semanal_mensal";
+        }
+        if ("semanal_anual".equalsIgnoreCase(rec) || "turno".equalsIgnoreCase(rec)) {
+            return "semanal_anual";
+        }
+        return "unica";
+    }
+
+    private String getDayOfWeekLabelPt(java.time.DayOfWeek dayOfWeek) {
+        return switch (dayOfWeek) {
+            case MONDAY -> "Segunda-feira";
+            case TUESDAY -> "Terça-feira";
+            case WEDNESDAY -> "Quarta-feira";
+            case THURSDAY -> "Quinta-feira";
+            case FRIDAY -> "Sexta-feira";
+            case SATURDAY -> "Sábado";
+            case SUNDAY -> "Domingo";
+        };
+    }
+
+    private String getMonthNamePt(int month) {
+        return switch (month) {
+            case 1 -> "Janeiro";
+            case 2 -> "Fevereiro";
+            case 3 -> "Março";
+            case 4 -> "Abril";
+            case 5 -> "Maio";
+            case 6 -> "Junho";
+            case 7 -> "Julho";
+            case 8 -> "Agosto";
+            case 9 -> "Setembro";
+            case 10 -> "Outubro";
+            case 11 -> "Novembro";
+            case 12 -> "Dezembro";
+            default -> String.valueOf(month);
+        };
     }
 }
