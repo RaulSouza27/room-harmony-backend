@@ -55,7 +55,7 @@ public class ReservationsController {
     /** Resolve o id do usuário autenticado a partir do username guardado no JWT. */
     private Integer getAuthenticatedUserId(Authentication auth) {
         if (auth == null || auth.getName() == null) return null;
-        return userRepository.findByUsername(auth.getName()).map(User::getId).orElse(null);
+        return userRepository.findIdByUsername(auth.getName()).orElse(null);
     }
 
     @Auditable(action = "SOLICITACAO_RESERVA", targetType = "RESERVA")
@@ -188,6 +188,12 @@ public class ReservationsController {
         return ResponseEntity.ok(resultDTO);
     }
 
+    @GetMapping("/pending-count")
+    public ResponseEntity<java.util.Map<String, Long>> getPendingCount() {
+        long count = reservationRepository.countPendingActionable();
+        return ResponseEntity.ok(java.util.Collections.singletonMap("count", count));
+    }
+
     @GetMapping("/readAll")
     public ResponseEntity<List<ReservationDTO>> readAll(
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate startDate,
@@ -199,19 +205,31 @@ public class ReservationsController {
             @RequestParam(required = false, defaultValue = "false") boolean includeReceipt
     ) {
         List<Reservation> all;
-        if (startDate != null && endDate != null) {
-            all = reservationRepository.findByDataBetween(startDate, endDate);
-        } else if (userId != null) {
-            all = reservationRepository.findByUserId(userId);
-        } else if (roomId != null) {
-            all = reservationRepository.findByRoomsId(roomId);
+        if (includeReceipt) {
+            if (startDate != null && endDate != null) {
+                all = reservationRepository.findByDataBetween(startDate, endDate);
+            } else if (userId != null) {
+                all = reservationRepository.findByUserId(userId);
+            } else if (roomId != null) {
+                all = reservationRepository.findByRoomsId(roomId);
+            } else {
+                all = reservationRepository.findAll();
+            }
         } else {
-            all = reservationRepository.findAll();
+            if (startDate != null && endDate != null) {
+                all = reservationRepository.findByDataBetweenLightweight(startDate, endDate);
+            } else if (userId != null) {
+                all = reservationRepository.findByUserIdLightweight(userId);
+            } else if (roomId != null) {
+                all = reservationRepository.findByRoomsIdLightweight(roomId);
+            } else {
+                all = reservationRepository.findAllLightweight();
+            }
         }
 
-        // Preload roomId -> unitId map in a single query to avoid N+1 roundtrips to remote DB
+        // Preload roomId -> unitId map in a single lightweight query (without Base64 room photos)
         java.util.Map<Integer, Integer> roomUnitMap = new java.util.HashMap<>();
-        for (com.clinica.escuta.model.Room room : roomRepository.findAll()) {
+        for (com.clinica.escuta.model.Room room : roomRepository.findAllLightweight()) {
             roomUnitMap.put(room.getId(), room.getUnitId());
         }
 
@@ -266,12 +284,12 @@ public class ReservationsController {
         LocalDate today = referenceDate != null ? referenceDate : LocalDate.now();
 
         List<Reservation> sourceReservations = effectiveUserId != null
-                ? reservationRepository.findByUserId(effectiveUserId)
-                : reservationRepository.findByStatusTrue();
+                ? reservationRepository.findByUserIdLightweight(effectiveUserId)
+                : reservationRepository.findByStatusTrueLightweight();
 
-        // Preload rooms, units, and users in single queries to avoid N+1
+        // Preload rooms, units, and users in single lightweight queries (excluding Base64 photos)
         java.util.Map<Integer, com.clinica.escuta.model.Room> roomMap = new java.util.HashMap<>();
-        for (com.clinica.escuta.model.Room room : roomRepository.findAll()) {
+        for (com.clinica.escuta.model.Room room : roomRepository.findAllLightweight()) {
             roomMap.put(room.getId(), room);
         }
 
@@ -282,9 +300,9 @@ public class ReservationsController {
 
         java.util.Map<Integer, User> userMap = new java.util.HashMap<>();
         if (effectiveUserId != null) {
-            userRepository.findById(effectiveUserId).ifPresent(u -> userMap.put(u.getId(), u));
+            userRepository.findByIdLightweight(effectiveUserId).ifPresent(u -> userMap.put(u.getId(), u));
         } else {
-            for (User u : userRepository.findAll()) {
+            for (User u : userRepository.findAllLightweight()) {
                 userMap.put(u.getId(), u);
             }
         }
@@ -633,25 +651,63 @@ public class ReservationsController {
     }
 
     @Auditable(action = "CANCELAMENTO_LOTE_RESERVA", targetType = "RESERVA")
-    @PreAuthorize("hasAuthority('admin')")
     @PostMapping("/cancel-batch")
     public ResponseEntity<?> cancelReservationsBatch(@RequestBody List<Integer> ids) {
         if (ids == null || ids.isEmpty()) {
-            return ResponseEntity.badRequest().body("No IDs provided.");
+            return ResponseEntity.badRequest().body("Nenhuma reserva selecionada.");
         }
+
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        boolean isCallerAdmin = isAdmin(auth);
+        Integer authenticatedUserId = null;
+        if (!isCallerAdmin) {
+            authenticatedUserId = getAuthenticatedUserId(auth);
+            if (authenticatedUserId == null) {
+                return ResponseEntity.status(403).body("Usuário autenticado não encontrado.");
+            }
+        }
+
         List<Reservation> reservations = reservationRepository.findAllById(ids);
         List<Reservation> toUpdate = new ArrayList<>();
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+
         for (Reservation r : reservations) {
+            if (!isCallerAdmin && !authenticatedUserId.equals(r.getUserId())) {
+                return ResponseEntity.status(403).body("Você não tem permissão para cancelar reservas de outro profissional.");
+            }
+
             String currentStatus = getStatusFromComments(r.getComments());
-            if (!"cancelada".equalsIgnoreCase(currentStatus)) {
-                String motivoVal = getMotivoFromComments(r.getComments());
-                String aprovadoVal = getAprovadoFromComments(r.getComments());
-                String recorrencia = getRecorrenciaFromComments(r.getComments());
+            if ("cancelada".equalsIgnoreCase(currentStatus) || "negada".equalsIgnoreCase(currentStatus)) {
+                continue;
+            }
+
+            String motivoVal = getMotivoFromComments(r.getComments());
+            String aprovadoVal = getAprovadoFromComments(r.getComments());
+            String recorrencia = getRecorrenciaFromComments(r.getComments());
+
+            if (isCallerAdmin) {
                 r.setComments("cancelada|" + motivoVal + "|" + aprovadoVal + "|" + recorrencia);
                 r.setStatus(false);
                 toUpdate.add(r);
+            } else {
+                if ("aprovada".equalsIgnoreCase(currentStatus)) {
+                    if (r.getData() != null && r.getHoraInicio() != null) {
+                        java.time.LocalDateTime reservationStart = r.getData().atTime(r.getHoraInicio());
+                        if (now.plusHours(24).isAfter(reservationStart)) {
+                            continue;
+                        }
+                    }
+                    r.setComments("solicitacao_cancelamento|" + motivoVal + "|" + aprovadoVal + "|" + recorrencia);
+                    r.setStatus(true);
+                    toUpdate.add(r);
+                } else if ("pendente".equalsIgnoreCase(currentStatus) || "reagendar".equalsIgnoreCase(currentStatus)) {
+                    r.setComments("cancelada|" + motivoVal + "|" + aprovadoVal + "|" + recorrencia);
+                    r.setStatus(false);
+                    toUpdate.add(r);
+                }
             }
         }
+
         if (!toUpdate.isEmpty()) {
             reservationRepository.saveAll(toUpdate);
         }

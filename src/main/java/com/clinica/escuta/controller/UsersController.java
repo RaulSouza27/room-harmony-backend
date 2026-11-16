@@ -42,7 +42,8 @@ public class UsersController {
     public ResponseEntity<List<UserDTO>> listAllUsers(
             @RequestParam(required = false, defaultValue = "false") boolean includePhoto
     ) {
-        List<UserDTO> users = userRepository.findAll().stream()
+        List<User> source = includePhoto ? userRepository.findAll() : userRepository.findAllLightweight();
+        List<UserDTO> users = source.stream()
                 .map(u -> new UserDTO(u, includePhoto))
                 .collect(Collectors.toList());
         return ResponseEntity.ok(users);

@@ -60,4 +60,39 @@ public class User {
 
     @Column(name = "board_number", nullable = false, length = 11)
     private String boardNumber;
+
+    public User() {
+    }
+
+    public User(
+            Integer id,
+            String username,
+            String email,
+            Boolean status,
+            String accessLevel,
+            Integer professionId,
+            Boolean firstLogin,
+            Boolean mustCompleteTour,
+            String phone,
+            String cpf,
+            String address,
+            String cep,
+            String photo,
+            String boardNumber
+    ) {
+        this.id = id;
+        this.username = username;
+        this.email = email;
+        this.status = status;
+        this.accessLevel = accessLevel;
+        this.professionId = professionId;
+        this.FirstLogin = firstLogin;
+        this.mustCompleteTour = mustCompleteTour;
+        this.phone = phone;
+        this.cpf = cpf;
+        this.address = address;
+        this.cep = cep;
+        this.photo = photo;
+        this.boardNumber = boardNumber;
+    }
 }
