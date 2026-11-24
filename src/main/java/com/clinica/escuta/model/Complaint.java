@@ -25,6 +25,15 @@ public class Complaint {
     @Column(name = "solved", nullable = false)
     private Boolean solved = false;
 
+    @Column(name = "resolution_notes", length = 500)
+    private String resolutionNotes;
+
+    @Column(name = "resolved_by", length = 150)
+    private String resolvedBy;
+
+    @Column(name = "resolved_at")
+    private LocalDateTime resolvedAt;
+
     @Column(name = "sender_daily_hash", nullable = false, length = 64)
     private String senderDailyHash;
 

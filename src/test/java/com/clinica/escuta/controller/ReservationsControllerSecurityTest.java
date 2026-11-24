@@ -321,11 +321,39 @@ class ReservationsControllerSecurityTest {
                     .getMethod("deleteReservation", Integer.class).getAnnotation(PreAuthorize.class);
             PreAuthorize batch = ReservationsController.class
                     .getMethod("deleteReservationsBatch", List.class).getAnnotation(PreAuthorize.class);
+            PreAuthorize cancelBatch = ReservationsController.class
+                    .getMethod("cancelReservationsBatch", List.class).getAnnotation(PreAuthorize.class);
 
             assertNotNull(single, "DELETE /reservations/{id} precisa de @PreAuthorize");
             assertNotNull(batch, "POST /reservations/delete-batch precisa de @PreAuthorize");
+            assertNotNull(cancelBatch, "POST /reservations/cancel-batch precisa de @PreAuthorize");
             assertEquals("hasAuthority('admin')", single.value());
             assertEquals("hasAuthority('admin')", batch.value());
+            assertEquals("hasAuthority('admin')", cancelBatch.value());
+        }
+
+        @Test
+        void cancelReservationsBatchMarksSelectedAsCancelledAndFreesSlot() {
+            Reservation r1 = existing(TENANT_ID, "aprovada");
+            r1.setId(501);
+            r1.setComments("aprovada||adminUser|unica");
+            r1.setStatus(true);
+
+            Reservation r2 = existing(OTHER_TENANT_ID, "pendente");
+            r2.setId(502);
+            r2.setComments("pendente|||semanal_mensal");
+            r2.setStatus(true);
+
+            when(reservationRepository.findAllById(List.of(501, 502))).thenReturn(List.of(r1, r2));
+
+            ResponseEntity<?> resp = controller.cancelReservationsBatch(List.of(501, 502));
+            assertEquals(HttpStatus.OK, resp.getStatusCode());
+
+            assertEquals("cancelada||adminUser|unica", r1.getComments());
+            assertFalse(r1.getStatus());
+            assertEquals("cancelada|||semanal_mensal", r2.getComments());
+            assertFalse(r2.getStatus());
+            verify(reservationRepository).saveAll(List.of(r1, r2));
         }
     }
 }

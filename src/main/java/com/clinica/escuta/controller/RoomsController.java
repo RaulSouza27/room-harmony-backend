@@ -59,11 +59,25 @@ public class RoomsController {
             @RequestParam(required = false, defaultValue = "false") boolean includePhotos
     ) {
         List<RoomDTO> list = new ArrayList<>();
-        for (Room r : roomRepository.findByStatusTrue()) {
-            list.add(new RoomDTO(r, includePhotos));
-        }
-        for (Room r : roomRepository.findByStatusFalse()) {
-            list.add(new RoomDTO(r, includePhotos));
+        if (includePhotos) {
+            for (Room r : roomRepository.findByStatusTrue()) {
+                list.add(new RoomDTO(r, true));
+            }
+            for (Room r : roomRepository.findByStatusFalse()) {
+                list.add(new RoomDTO(r, true));
+            }
+        } else {
+            List<Room> allRooms = roomRepository.findAllLightweight();
+            for (Room r : allRooms) {
+                if (Boolean.TRUE.equals(r.getStatus())) {
+                    list.add(new RoomDTO(r, false));
+                }
+            }
+            for (Room r : allRooms) {
+                if (!Boolean.TRUE.equals(r.getStatus())) {
+                    list.add(new RoomDTO(r, false));
+                }
+            }
         }
         return ResponseEntity.ok(list);
     }

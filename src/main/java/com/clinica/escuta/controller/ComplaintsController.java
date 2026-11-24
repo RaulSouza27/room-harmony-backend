@@ -7,9 +7,15 @@ import com.clinica.escuta.model.Complaint;
 import com.clinica.escuta.model.User;
 import com.clinica.escuta.repository.ComplaintRepository;
 import com.clinica.escuta.repository.UserRepository;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -26,7 +32,9 @@ import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @CrossOrigin(origins = "*")
@@ -36,6 +44,8 @@ public class ComplaintsController {
 
     private static final int DAILY_LIMIT = 3;
     private static final int MAX_COMPLAINT_LENGTH = 255;
+    private static final int MIN_RESOLUTION_LENGTH = 5;
+    private static final int MAX_RESOLUTION_LENGTH = 500;
 
     private final ComplaintRepository complaintRepository;
     private final UserRepository userRepository;
@@ -81,6 +91,147 @@ public class ComplaintsController {
                 "limit", DAILY_LIMIT,
                 "remaining", remaining
         ));
+    }
+
+    /**
+     * Lista apenas as manifestações IDENTIFICADAS (user_id != null) do locatário autenticado.
+     */
+    @GetMapping("/my")
+    public ResponseEntity<?> readMyIdentifiedComplaints() {
+        Optional<User> currentUser = getAuthenticatedUser();
+        if (currentUser.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Usuário não autenticado.");
+        }
+
+        User author = currentUser.get();
+        List<Complaint> list = complaintRepository.findByUserIdOrderByCreatedAtDesc(author.getId());
+        List<ComplaintDTO> dtos = new ArrayList<>(list.size());
+        for (Complaint c : list) {
+            dtos.add(new ComplaintDTO(c, author));
+        }
+        return ResponseEntity.ok(dtos);
+    }
+
+    /**
+     * Lista paginada das manifestações IDENTIFICADAS do locatário autenticado (10, 20, 30 ou 50 por vez).
+     */
+    @GetMapping("/my/paged")
+    public ResponseEntity<?> readMyIdentifiedComplaintsPaged(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size
+    ) {
+        Optional<User> currentUser = getAuthenticatedUser();
+        if (currentUser.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Usuário não autenticado.");
+        }
+
+        User author = currentUser.get();
+        int safeSize = sanitizePageSize(size);
+        Pageable pageable = PageRequest.of(Math.max(0, page), safeSize);
+        Page<Complaint> complaintPage = complaintRepository.findByUserIdOrderByCreatedAtDesc(author.getId(), pageable);
+        Page<ComplaintDTO> dtoPage = complaintPage.map(c -> new ComplaintDTO(c, author));
+        return ResponseEntity.ok(dtoPage);
+    }
+
+    /**
+     * Indicadores rápidos da Ouvidoria para o Dashboard e cabeçalhos (exclusivo para administradores).
+     */
+    @PreAuthorize("hasAuthority('admin')")
+    @GetMapping("/stats")
+    public ResponseEntity<Map<String, Long>> getComplaintStats() {
+        long solved = complaintRepository.countBySolvedTrue();
+        long pending = complaintRepository.countBySolvedFalse();
+        long total = solved + pending;
+        return ResponseEntity.ok(Map.of(
+                "total", total,
+                "pending", pending,
+                "solved", solved
+        ));
+    }
+
+    /**
+     * Listagem paginada no banco de dados (10, 20, 30 ou 50 por página) com filtro de busca e status.
+     */
+    @PreAuthorize("hasAuthority('admin')")
+    @GetMapping("/paged")
+    public ResponseEntity<Page<ComplaintDTO>> readPaged(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "10") int size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) Boolean solved
+    ) {
+        int safeSize = sanitizePageSize(size);
+        Pageable pageable = PageRequest.of(
+                Math.max(0, page),
+                safeSize,
+                Sort.by(Sort.Direction.DESC, "createdAt", "id")
+        );
+
+        String trimmedSearch = search != null ? search.trim() : "";
+        List<Integer> matchingUserIds = new ArrayList<>();
+        if (!trimmedSearch.isEmpty()) {
+            String lower = trimmedSearch.toLowerCase();
+            matchingUserIds = userRepository.findAll().stream()
+                    .filter(u -> u.getId() != null && (
+                            (u.getUsername() != null && u.getUsername().toLowerCase().contains(lower)) ||
+                            (u.getEmail() != null && u.getEmail().toLowerCase().contains(lower))
+                    ))
+                    .map(User::getId)
+                    .toList();
+        }
+        final List<Integer> authorIdsFilter = matchingUserIds;
+
+        Specification<Complaint> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+
+            if (solved != null) {
+                predicates.add(cb.equal(root.get("solved"), solved));
+            }
+
+            if (!trimmedSearch.isEmpty()) {
+                String pattern = "%" + trimmedSearch.toLowerCase() + "%";
+                List<Predicate> orPredicates = new ArrayList<>();
+                orPredicates.add(cb.like(cb.lower(root.get("complaints")), pattern));
+                orPredicates.add(cb.like(cb.lower(cb.coalesce(root.get("resolutionNotes"), "")), pattern));
+                orPredicates.add(cb.like(cb.lower(cb.coalesce(root.get("resolvedBy"), "")), pattern));
+
+                if ("anonimo".contains(trimmedSearch.toLowerCase()) || "anônimo".contains(trimmedSearch.toLowerCase())) {
+                    orPredicates.add(cb.isNull(root.get("userId")));
+                }
+
+                String cleanId = trimmedSearch.startsWith("#") ? trimmedSearch.substring(1).trim() : trimmedSearch;
+                try {
+                    Integer parsedId = Integer.valueOf(cleanId);
+                    orPredicates.add(cb.equal(root.get("id"), parsedId));
+                } catch (NumberFormatException ignored) {
+                }
+
+                if (!authorIdsFilter.isEmpty()) {
+                    orPredicates.add(root.get("userId").in(authorIdsFilter));
+                }
+
+                predicates.add(cb.or(orPredicates.toArray(new Predicate[0])));
+            }
+
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+
+        Page<Complaint> pageResult = complaintRepository.findAll(spec, pageable);
+        Set<Integer> pageUserIds = pageResult.getContent().stream()
+                .map(Complaint::getUserId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        Map<Integer, User> userMap = pageUserIds.isEmpty()
+                ? Map.of()
+                : userRepository.findAllById(pageUserIds).stream()
+                        .filter(u -> u.getId() != null)
+                        .collect(Collectors.toMap(User::getId, u -> u, (a, b) -> a));
+
+        Page<ComplaintDTO> dtoPage = pageResult.map(c ->
+                new ComplaintDTO(c, c.getUserId() != null ? userMap.get(c.getUserId()) : null)
+        );
+        return ResponseEntity.ok(dtoPage);
     }
 
     /**
@@ -159,7 +310,7 @@ public class ComplaintsController {
     }
 
     /**
-     * Marca uma reclamação como resolvida ou não resolvida (exclusivo para administradores).
+     * Marca uma reclamação como resolvida (exigindo parecer obrigatório) ou não resolvida (exclusivo para administradores).
      */
     @Auditable(action = "ALTERACAO_STATUS_OUVIDORIA", targetType = "OUVIDORIA")
     @PreAuthorize("hasAuthority('admin')")
@@ -174,10 +325,40 @@ public class ComplaintsController {
         }
 
         Complaint complaint = opt.get();
-        if (request != null && request.getSolved() != null) {
-            complaint.setSolved(request.getSolved());
+        boolean newSolved = (request != null && request.getSolved() != null)
+                ? request.getSolved()
+                : !Boolean.TRUE.equals(complaint.getSolved());
+
+        if (newSolved) {
+            String notes = (request != null && request.getResolutionNotes() != null)
+                    ? request.getResolutionNotes().trim()
+                    : "";
+            if (notes.length() < MIN_RESOLUTION_LENGTH) {
+                return ResponseEntity.badRequest()
+                        .body("É obrigatório informar o parecer de resolução (mínimo de " + MIN_RESOLUTION_LENGTH + " caracteres) para marcar como resolvida.");
+            }
+            if (notes.length() > MAX_RESOLUTION_LENGTH) {
+                return ResponseEntity.badRequest()
+                        .body("O parecer de resolução deve ter no máximo " + MAX_RESOLUTION_LENGTH + " caracteres.");
+            }
+
+            Optional<User> adminUser = getAuthenticatedUser();
+            String resolvedBy = adminUser
+                    .map(u -> u.getUsername() + (u.getEmail() != null ? " (" + u.getEmail() + ")" : ""))
+                    .orElseGet(() -> {
+                        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                        return auth != null && auth.getName() != null ? auth.getName() : "Administrador";
+                    });
+
+            complaint.setSolved(true);
+            complaint.setResolutionNotes(notes);
+            complaint.setResolvedBy(resolvedBy);
+            complaint.setResolvedAt(LocalDateTime.now());
         } else {
-            complaint.setSolved(!Boolean.TRUE.equals(complaint.getSolved()));
+            complaint.setSolved(false);
+            complaint.setResolutionNotes(null);
+            complaint.setResolvedBy(null);
+            complaint.setResolvedAt(null);
         }
 
         Complaint saved = complaintRepository.save(complaint);
@@ -185,6 +366,13 @@ public class ComplaintsController {
                 ? userRepository.findById(saved.getUserId()).orElse(null)
                 : null;
         return ResponseEntity.ok(new ComplaintDTO(saved, author));
+    }
+
+    private int sanitizePageSize(int requestedSize) {
+        if (requestedSize <= 10) return 10;
+        if (requestedSize <= 20) return 20;
+        if (requestedSize <= 30) return 30;
+        return 50;
     }
 
     private Complaint buildComplaintEntity(Integer authorId, String text, String dailyHash) {
@@ -223,4 +411,3 @@ public class ComplaintsController {
         }
     }
 }
-

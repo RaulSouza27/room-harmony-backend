@@ -173,6 +173,27 @@ public class AuditAspect {
         }
 
         details = sb.toString();
+      } else if ("OUVIDORIA".equals(auditable.targetType()) &&
+                 result instanceof ResponseEntity<?> re &&
+                 re.getBody() instanceof com.clinica.escuta.DTO.ComplaintDTO cDto) {
+        targetName = "Ouvidoria #" + cDto.getId();
+        StringBuilder sb = new StringBuilder();
+        sb.append("Manifestação: #").append(cDto.getId()).append("\n");
+        sb.append("Status resultante: ")
+            .append(Boolean.TRUE.equals(cDto.getSolved()) ? "RESOLVIDA" : "NÃO RESOLVIDA")
+            .append("\n");
+        if (Boolean.TRUE.equals(cDto.getSolved())) {
+          sb.append("Resolvido por: ")
+              .append(cDto.getResolvedBy() != null ? cDto.getResolvedBy() : (userName != null ? userName : "Admin"))
+              .append("\n");
+          sb.append("Parecer da solução: ")
+              .append(cDto.getResolutionNotes() != null ? cDto.getResolutionNotes() : "-");
+        } else {
+          sb.append("Reaberto por: ")
+              .append(userName != null ? userName : "Admin")
+              .append(userEmail != null ? " (" + userEmail + ")" : "");
+        }
+        details = sb.toString();
       }
 
       AuditEvent auditEvent =

@@ -45,4 +45,31 @@ public class Room {
 
     @Column(columnDefinition = "TEXT")
     private String photo4;
+
+    public Room() {
+    }
+
+    public Room(
+            Integer id,
+            String name,
+            Integer unitId,
+            Boolean status,
+            String description,
+            String comments,
+            String photo1,
+            String photo2,
+            String photo3,
+            String photo4
+    ) {
+        this.id = id;
+        this.name = name;
+        this.unitId = unitId;
+        this.status = status;
+        this.description = description;
+        this.comments = comments;
+        this.photo1 = photo1;
+        this.photo2 = photo2;
+        this.photo3 = photo3;
+        this.photo4 = photo4;
+    }
 }

@@ -47,4 +47,31 @@ public class Reservation {
 
     @Column(nullable = false)
     private Boolean status = true;
+
+    public Reservation() {
+    }
+
+    public Reservation(
+            Integer id,
+            Integer roomsId,
+            Integer userId,
+            LocalDate data,
+            LocalTime horaInicio,
+            LocalTime horaFim,
+            String depositImage,
+            String description,
+            String comments,
+            Boolean status
+    ) {
+        this.id = id;
+        this.roomsId = roomsId;
+        this.userId = userId;
+        this.data = data;
+        this.horaInicio = horaInicio;
+        this.horaFim = horaFim;
+        this.depositImage = depositImage;
+        this.description = description;
+        this.comments = comments;
+        this.status = status;
+    }
 }
